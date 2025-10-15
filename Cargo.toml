@@ -1,0 +1,12 @@
+[package]
+name = "appack-cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+zip = { version = "6" }
+anyhow = { version = "1" }
+serde = { version = "1", features = ["derive"] }
+serde_yaml = { version = "0.9" }
+virt = { version = "0" }
