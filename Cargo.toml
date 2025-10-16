@@ -1,7 +1,12 @@
 [package]
 name = "appack-cli"
 version = "0.1.0"
+license = "GPL-3"
 edition = "2024"
+authors = [
+    "Paul <abonnementspaul -@- gmail.com>",
+    "All AppPack contributors"
+]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
@@ -9,4 +14,8 @@ zip = { version = "6" }
 anyhow = { version = "1" }
 serde = { version = "1", features = ["derive"] }
 serde_yaml = { version = "0.9" }
-virt = { version = "0" }
+qapi = { version = "0", features = [ "qmp" ] }
+
+[[bin]]
+name = "appack"
+path = "src/main.rs"

@@ -1,0 +1,147 @@
+# If for any reason you want to build freerdp from source, uncomment the following part.
+# CF: https://github.com/FreeRDP/Remmina/blob/master/snap/snapcraft.yaml
+#  freerdp:
+#    plugin: cmake
+#    source: https://github.com/FreeRDP/FreeRDP.git
+#    source-tag: 3.14.1
+#    source-depth: 1
+#    # override-build: |
+#    #   current_dir=$PWD
+#    #   cd "$SNAPCRAFT_PART_SRC"
+#    #   git apply --verbose "$SNAPCRAFT_STAGE/0003-Fixed-6298-Mask-CACHED_BRUSH-when-checking-brush-sty.patch"
+#    #   git apply --verbose "$SNAPCRAFT_STAGE/0001-Fix-seeking-in-Cache-Brush-and-other-Secondary-Drawi.patch"
+#    #   cd "$current_dir"
+#    #   snapcraftctl build
+#    build-packages:
+#      - libasound2-dev
+#      - libavcodec-dev
+#      - libavutil-dev
+#      - libcups2-dev
+#      - libffi-dev
+#      - libnacl-dev
+#      - libpcsclite-dev
+#      - libpulse-dev
+#      - libsecret-1-dev
+#      - libssl-dev
+#      - libx11-dev
+#      - libusb-1.0-0-dev
+#      - libxkbfile-dev
+#      - libxv-dev
+#      - libfuse3-dev
+#      - libkrb5-dev
+#      - libpkcs11-helper1-dev
+#      - libswscale-dev
+#      - libicu-dev
+#      - libwayland-dev
+#      - wayland-protocols
+#      - libxkbcommon-dev
+#    stage-packages:
+##      - libffi7 # libffi8 exists
+#      - libusb-1.0-0
+#      - libzvbi0
+#      - x11-utils
+#      - libfuse3-3
+#      - libkrb5-3
+#      - libpkcs11-helper1
+#      - libflac12t64
+#      - ocl-icd-libopencl1
+#      - libsvtav1enc1d1
+#      - libxfixes3
+#      - libaom3
+#      - libasound2t64
+#      - libasyncns0
+#      - libavahi-client3
+#      - libavahi-common3
+#      - libavcodec60
+#      - libavutil58
+#      - libcairo-gobject2
+#      - libcairo2
+#      - libcodec2-1.2
+#      - libcups2t64
+#      - libdatrie1
+#      - libdav1d7
+#      - libfribidi0
+#      - libgdk-pixbuf-2.0-0
+#      - libgomp1
+#      - libgraphite2-3
+#      - libgsm1
+#      - libharfbuzz0b
+#      - libhwy1t64
+#      - libjpeg-turbo8
+#      - libjxl0.7
+#      - liblcms2-2
+#      - libmp3lame0
+#      - libmpg123-0t64
+#      - libogg0
+#      - libopenjp2-7
+#      - libopus0
+#      - libpango-1.0-0
+#      - libpangocairo-1.0-0
+#      - libpangoft2-1.0-0
+#      - libpixman-1-0
+#      - libpulse0
+#      - librav1e0
+#      - librsvg2-2
+#      - libsharpyuv0
+#      - libshine3
+#      - libsnappy1v5
+#      - libsndfile1
+#      - libsoxr0
+#      - libspeex1
+#      - libswresample4
+#      - libswscale7
+#      - libthai0
+#      - libtheora0
+#      - libtwolame0
+#      - libva-drm2
+#      - libva-x11-2
+#      - libva2
+#      - libvdpau1
+#      - libvorbis0a
+#      - libvorbisenc2
+#      - libvpl2
+#      - libvpx9
+#      - libwebp7
+#      - libwebpmux3
+#      - libx264-164
+#      - libx265-199
+#      - libxcb-render0
+#      - libxvidcore4
+#    cmake-parameters:
+#      # Workaround for ubuntu 18.04 armhf: build fails with "unable to find a register to spill"
+#      # remember to remove when snapcraft will be built in ubuntu >= 20.04
+#      # This must be at the beginning
+#      - -DCMAKE_BUILD_TYPE=Release
+#      - -DWITH_ICU=on
+#      - -DWITH_WAYLAND=on
+#      - -DCHANNEL_TSMF=off
+#      - -DCHANNEL_URBDRC=on
+#      - -DBUILD_TESTING=off
+#      - -DWITH_MANPAGES=off
+#      - -DWITH_GSSAPI=off
+#      - -DWITH_SAMPLE=off
+#      - -DWITH_SERVER=off
+#      - -DWITH_DSP_FFMPEG=on
+#      - -DWITH_OSS=off
+#      - -DWITH_PULSE=on
+#      - -DWITH_GSTREAMER=off
+#      - -DWITH_FFMPEG=on
+#      - -DWITH_CHANNELS=on
+#      - -DBUILTIN_CHANNELS=on
+#      - -DWITH_CUPS=on
+#      - -DWITH_PCSC=on
+#      - -DWITH_JPEG=on
+#      - -DWITH_LIBSYSTEMD=off
+#      # - -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON
+#
+#      # XXX: This is an hack to have a kind of bind-mount with absolute prefix.
+##      - -DCMAKE_INSTALL_PREFIX=/snap/$CRAFT_PROJECT_NAME/current/usr
+#      - -DCMAKE_INSTALL_PREFIX=/usr
+
+# TEST
+#plugs:
+#  libvirt-qemu-save:
+#    interface: system-files
+#    write:
+#      - /var/lib/libvirt/qemu/save
+#      - /var/lib/libvirt/images

@@ -3,3 +3,7 @@ services:
     build:
       dockerfile: builder.Dockerfile
     command: tail -f /dev/null
+
+  ubuntu:
+    image: ubuntu:latest
+    command: tail -f /dev/null

@@ -1,1 +1,4 @@
 /target
+*.snap
+snapbuildtools
+AppPack*

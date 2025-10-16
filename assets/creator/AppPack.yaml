@@ -1,0 +1,35 @@
+name: MyExample calendar app
+id: myexample-calendar
+version: 0.1.0
+description: This is an example app that will be packed for AppPack
+state: state.bin
+image: image.qcow2
+snapshot: OnClose
+readme:
+  folder: readme
+  index: README.md
+base_command: >-
+  -enable-kvm
+  -cpu host,migratable=on,hv-time=on,hv-relaxed=on,hv-vapic=on,hv-spinlocks=0x1fff
+  -smp 2,cores=2,threads=1
+  -m 4G
+  -machine pc-q35-10.1,accel=kvm
+  -rtc base=localtime,driftfix=slew
+  -drive file=$IMAGE_FILE_PATH,if=virtio,format=qcow2
+  -netdev user,id=hostnet0,hostfwd=tcp::33890-:3389,hostfwd=udp::33890-:3389
+  -device virtio-net-pci,netdev=hostnet0
+  -device virtio-balloon-pci
+  -usb -device usb-tablet
+  -vga virtio
+install_append: >-
+  -display sdl
+  -drive file=installer.iso,media=cdrom
+  -drive file=guest-addons.iso,media=cdrom
+configure_append: >-
+  -qmp unix:qmp-appack.sock,server=on,wait=off
+freerdp_command: >-
+  /v:localhost:$RDP_PORT
+  /u:VmUser
+  /p:VmPassword
+  /cert:ignore
+  +clipboard
