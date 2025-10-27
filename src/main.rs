@@ -1,6 +1,6 @@
 mod internal;
 
-use crate::internal::creator::{creator_boot, creator_boot_install, creator_new};
+use crate::internal::creator::{creator_boot, creator_boot_install, creator_new, creator_snapshot};
 use crate::internal::info::print_info;
 use crate::internal::install_appack::install_appack;
 use crate::internal::types::AppPackLocalSettings;
@@ -25,7 +25,7 @@ enum CliAction {
 
     #[clap(alias = "u")]
     Uninstall {
-        domain: String,
+        id: String,
     },
 
     Creator {
@@ -41,7 +41,6 @@ enum CliCreatorAction {
     Boot,
     BootInstall,
     Snapshot,
-    Zip,
 }
 
 fn main() -> Result<()> {
@@ -51,7 +50,7 @@ fn main() -> Result<()> {
 
     match args.action {
         CliAction::Install { file } => install_appack(file, settings)?,
-        CliAction::Uninstall { domain } => uninstall_appack(&settings, &domain)?,
+        CliAction::Uninstall { id } => uninstall_appack(&settings, &id)?,
         CliAction::Creator { action } => match action {
             CliCreatorAction::New => {
                 creator_new()?;
@@ -63,10 +62,7 @@ fn main() -> Result<()> {
                 creator_boot()?;
             }
             CliCreatorAction::Snapshot => {
-                todo!()
-            }
-            CliCreatorAction::Zip => {
-                todo!()
+                creator_snapshot()?;
             }
         },
         CliAction::Info => {

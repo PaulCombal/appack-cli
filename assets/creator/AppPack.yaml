@@ -8,6 +8,8 @@ snapshot: OnClose
 readme:
   folder: readme
   index: README.md
+desktop_entries:
+  - desktop/myapp.desktop
 base_command: >-
   -enable-kvm
   -cpu host,migratable=on,hv-time=on,hv-relaxed=on,hv-vapic=on,hv-spinlocks=0x1fff

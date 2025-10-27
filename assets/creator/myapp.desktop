@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=My calendar app
+Exec=appack launch myexample-calendar cmd.exe
+Terminal=false
+Type=Application
+Icon=myexample-calendar
+Comment=Appack example app
+Categories=Utils;
+StartupWMClass=myexample-calendar;

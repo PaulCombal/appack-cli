@@ -1,4 +1,5 @@
 pub mod creator;
+mod helpers;
 pub mod info;
 pub mod install_appack;
 pub mod installed_helpers;

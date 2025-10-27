@@ -116,18 +116,20 @@ fn add_and_save_installed(
     settings: &AppPackLocalSettings,
     installed: &mut InstalledAppPacks,
 ) -> Result<()> {
-    let new_entry = InstalledAppPackEntry {
-        id: config.id.clone(),
-        description: config.description.clone(),
-        version: config.version.clone(),
-        name: config.name.clone(),
-        image: config.image.clone(),
-        desktop_entries: None, // TODO
-    };
+    todo!();
 
-    installed.installed.push(new_entry);
-
-    save_installed(installed, settings)?;
+    // let new_entry = InstalledAppPackEntry {
+    //     id: config.id.clone(),
+    //     description: config.description.clone(),
+    //     version: config.version.clone(),
+    //     name: config.name.clone(),
+    //     image: config.image.clone(),
+    //     desktop_entries: None, // TODO
+    // };
+    //
+    // installed.installed.push(new_entry);
+    //
+    // save_installed(installed, settings)?;
 
     Ok(())
 }

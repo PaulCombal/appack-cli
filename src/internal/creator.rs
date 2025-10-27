@@ -1,9 +1,14 @@
-use crate::internal::types::AppPackIndexFile;
-use anyhow::{Result, anyhow};
-use std::io::Read;
+use crate::internal::helpers::zip_dir;
+use crate::internal::types::{AppPackIndexFile, InstalledAppPackEntry};
+use anyhow::{Context, Result, anyhow};
+use qapi::{Qmp, qmp};
+use std::io::{Read, Write};
 use std::net::{Ipv4Addr, TcpListener};
+use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::process::Command;
+use zip::write::SimpleFileOptions;
+use zip::{CompressionMethod, ZipWriter};
 
 fn create_image(path: &Path) -> Result<()> {
     Command::new("qemu-img")
@@ -36,6 +41,77 @@ fn get_os_assigned_port() -> Result<u16> {
     Ok(port)
 }
 
+// fn get_xfreerdp3_pids() -> Result<Vec<i32>> {
+//     let output = Command::new("sh")
+//         .arg("-c")
+//         .arg("ps aux | grep xfreerdp3 | grep -v grep | awk '{print $2}'")
+//         .output()
+//         .map_err(|e| anyhow!("Failed to execute command: {}", e))?;
+//
+//     if !output.status.success() {
+//         return Err(anyhow!("Command failed: {:?}", output));
+//     }
+//
+//     let stdout = String::from_utf8_lossy(&output.stdout);
+//
+//     let pids = stdout
+//         .lines()
+//         .filter_map(|s| s.trim().parse::<i32>().ok())
+//         .collect();
+//
+//     Ok(pids)
+// }
+
+fn get_xfreerdp3_pids() -> Result<String> {
+    let output = Command::new("sh")
+        .arg("-c")
+        .arg("ps aux | grep xfreerdp3 | grep -v grep | awk '{print $2}'")
+        .output()
+        .map_err(|e| anyhow!("Failed to execute command: {}", e))?;
+
+    if !output.status.success() {
+        return Err(anyhow!("PID finding command failed"));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn terminate_xfreerdp3() -> Result<()> {
+    // Return the PIDs as a single string (e.g., "1234 5678 9012")
+    let pids_string = get_xfreerdp3_pids()?;
+
+    if pids_string.is_empty() {
+        return Ok(());
+    }
+
+    let pids: Vec<&str> = pids_string.split_whitespace().collect();
+
+    let mut command = Command::new("kill");
+    command.arg("-TERM");
+    command.args(pids);
+    println!("Executing: kill -TERM {}", pids_string);
+
+    match command.status() {
+        Ok(status) => {
+            if !status.success() {
+                eprintln!("'kill' command failed with status: {}", status);
+            }
+        }
+        Err(e) => return Err(anyhow!("Failed to execute 'kill' command: {}", e)),
+    }
+
+    while let Ok(pids) = get_xfreerdp3_pids() {
+        if pids.is_empty() {
+            break;
+        }
+
+        println!("Waiting for processes to exit...");
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+
+    Ok(())
+}
+
 pub fn creator_new() -> Result<()> {
     let assets_path_str =
         std::env::var("SNAP").map_err(|e| anyhow!("Failed to get assets path: {}", e))?;
@@ -54,6 +130,10 @@ pub fn creator_new() -> Result<()> {
     std::fs::copy(
         assets_path.join("creator").join("AppPack.yaml"),
         "AppPack/AppPack.yaml",
+    )?;
+    std::fs::copy(
+        assets_path.join("creator").join("myapp.desktop"),
+        "AppPack/desktop/myapp.desktop",
     )?;
 
     create_image(Path::new("AppPack/image.qcow2"))?;
@@ -80,28 +160,180 @@ pub fn creator_boot() -> Result<()> {
 
     let mut rdp_command = config.get_rdp_configure_command(free_port);
 
-    for i in 1..5 {
-        println!("Trying to connect to RDP on port {}...", free_port);
-
-        match rdp_command.status() {
-            Ok(status) => {
-                if status.success() {
-                    println!("RDP was successful");
-                    break;
-                }
-
-                println!("RDP failed: {status}. Retrying in 5 seconds ({i}/5)");
-                std::thread::sleep(std::time::Duration::from_secs(5));
+    match rdp_command.status() {
+        Ok(status) => {
+            if status.success() {
+                println!("RDP was successful");
+            } else {
+                return Err(anyhow!("RDP failed with status: {status:?}"));
             }
-            Err(e) => {
-                println!("Failed to start RDP process for port {} ({e:?}). Retrying in 5 seconds ({i}/5)", free_port);
-                std::thread::sleep(std::time::Duration::from_secs(5));
-            }
+        }
+        Err(e) => {
+            return Err(anyhow!("RDP process failed with error: {e:?}"));
         }
     }
 
     qemu_child.wait()?;
     println!("Qemu exited");
+
+    Ok(())
+}
+
+// For now we will take a snapshot of the disk and memory and this is what will be shipped.
+// It is probably possible to optimize this further.
+pub fn creator_snapshot() -> Result<()> {
+    // We read the config first to validate its contents before proceeding with the snapshot
+    let config = read_config(Path::new("AppPack.yaml"))?;
+    let socket_addr = "./qmp-appack.sock";
+    let stream = UnixStream::connect(socket_addr)
+        .map_err(|e| anyhow!("Failed to connect to QMP socket: {}", e))?;
+    let mut qmp = Qmp::from_stream(&stream);
+
+    let info = qmp
+        .handshake()
+        .map_err(|e| anyhow!("Failed to handshake with QMP: {}", e))?;
+    println!("QMP info: {:#?}", info);
+
+    // let status = qmp.execute(&qmp::query_status { }).map_err(|e| anyhow!("Failed to get QMP status: {}", e))?;
+    // println!("VCPU status: {:#?}", status);
+
+    // 1. Close RDP connections (ctrl+c on xfreerdp?)
+    terminate_xfreerdp3()?;
+
+    // 2. Pause VM
+    qmp.execute(&qmp::stop {}).context("Failed to stop VM")?;
+
+    // 3. Take a snapshot (internal)
+    {
+        // In case we're not using -nodefaults, we have to check for devices where inserted is not null
+        let blocks = qmp
+            .execute(&qmp::query_block {})
+            .map_err(|e| anyhow!("Failed to get block info: {}", e))?;
+        let blocks = blocks.iter().filter(|b| b.inserted.is_some()).collect::<Vec<_>>();
+
+        if blocks.len() != 1 {
+            return Err(anyhow!("Expected 1 block device, got {} ({blocks:?})", blocks.len()));
+        }
+
+        let block = &blocks[0];
+        let block_node_name = block
+            .inserted
+            .clone()
+            .context("BlockInfo does not contain 'inserted' data.")?
+            .node_name
+            .context("BlockDeviceInfo does not contain 'node_name'.")?;
+
+        qmp.execute(&qmp::snapshot_save {
+            tag: "appack-init".to_string(),
+            vmstate: block_node_name.clone(),
+            devices: [block_node_name].to_vec(),
+            job_id: "appack-init-save".to_string(),
+        })
+        .context("Failed to make snapshot")?;
+
+        // Wait for the snapshot to finish
+        loop {
+            let jobs = qmp
+                .execute(&qmp::query_jobs {})
+                .map_err(|e| anyhow!("Failed to get jobs: {}", e))?;
+            let job = jobs.into_iter().find(|j| j.id == "appack-init-save");
+            if job.is_none() {
+                return Err(anyhow!("Failed to find job with id 'appack-init-save'"));
+            }
+
+            let job = job.unwrap();
+
+            println!("Job status: {:#?}", job);
+
+            match job.status {
+                qmp::JobStatus::concluded => {
+                    if let Some(err) = job.error {
+                        return Err(anyhow!("Failed to take snapshot: {}", err));
+                    }
+                    println!("Snapshot complete");
+                    break;
+                }
+                qmp::JobStatus::created
+                | qmp::JobStatus::running
+                | qmp::JobStatus::waiting
+                | qmp::JobStatus::pending => {
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    println!("Snapshot in progress, waiting...");
+                }
+                _ => {
+                    return Err(anyhow!("Snapshot in unknown state: {job:?}"));
+                }
+            }
+        }
+    }
+
+    // 4. Destroy the VM. Why do this gracefully?
+    qmp.execute(&qmp::quit {})
+        .map_err(|e| anyhow!("Failed to quit QMP: {}", e))?;
+
+    // 5. Zip files
+    {
+        let zip_name = format!("{}_{}.zip", config.id, config.version);
+        let zip_file = std::fs::File::create(zip_name)
+            .map_err(|e| anyhow!("Failed to create zip file: {}", e))?;
+        let mut zip = ZipWriter::new_stream(zip_file);
+
+        // #[cfg(debug_assertions)]
+        let zip_options = SimpleFileOptions::default()
+            .compression_method(CompressionMethod::Stored)
+            .unix_permissions(0o755);
+
+        // #[cfg(not(debug_assertions))]
+        // let zip_options = SimpleFileOptions::default()
+        //     .compression_method(CompressionMethod::Deflated)
+        //     .compression_level(Some(9))
+        //     .unix_permissions(0o755);
+
+        // Add image
+        println!("Adding image file to package. This will take a while.");
+        zip.start_file("image.qcow2", zip_options)
+            .map_err(|e| anyhow!("Failed to add file to zip: {}", e))?;
+        let mut f1 = std::fs::File::open(&config.image)
+            .map_err(|e| anyhow!("Failed to open file: {}", e))?;
+        std::io::copy(&mut f1, &mut zip)
+            .map_err(|e| anyhow!("Failed to copy file to zip: {}", e))?;
+        println!("Added 'image.qcow2' to package");
+
+        // Add readme folder
+        zip_dir(&mut zip, &zip_options, Path::new(&config.readme.folder))?;
+
+        // Add desktop entries
+        if let Some(entries) = &config.desktop_entries {
+            for entry in entries {
+                let entry_path = Path::new(entry);
+                let entry_file_name = entry_path.file_name().ok_or_else(|| {
+                    anyhow!("Could not get file name of desktop entry {entry_path:?}")
+                })?;
+
+                let mut f1 = std::fs::File::open(entry)
+                    .map_err(|e| anyhow!("Failed to open file: {}", e))?;
+
+                let file_in_zip = format!("desktop/{}", entry_file_name.display());
+                zip.start_file(file_in_zip, zip_options)
+                    .map_err(|e| anyhow!("Failed to add file to zip: {}", e))?;
+                std::io::copy(&mut f1, &mut zip)
+                    .map_err(|e| anyhow!("Failed to copy file to zip: {}", e))?;
+                println!("Added '{entry_file_name:?}' to package");
+            }
+        }
+
+        // Add installed entry
+        let installed_appack_entry = InstalledAppPackEntry::from(config);
+
+        let installed_entry_str = serde_yaml::to_string(&installed_appack_entry)?;
+        zip.start_file("AppPack.yaml", zip_options)
+            .map_err(|e| anyhow!("Failed to start file AppPack: {}", e))?;
+        zip.write_all(installed_entry_str.as_bytes())
+            .map_err(|e| anyhow!("Failed to write AppPack.yaml to zip: {}", e))?;
+
+        zip.finish()
+            .map_err(|e| anyhow!("Failed to finish zip: {}", e))?;
+    }
 
     Ok(())
 }

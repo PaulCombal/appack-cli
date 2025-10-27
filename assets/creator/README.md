@@ -31,7 +31,17 @@ For now, it is recommended not to edit it and not to interfere with the `qmp-app
 From there on, install your application inside the VM. Make sure not to open the app once installed, as you probably
 want it to be left in a pristine state for other users to enjoy.
 
-The next step is to take a complete snapshot of the VM's current state.
+To get a preview of what your app will look like, you can use AppPack's integrated FreeRDP client.
+
+```
+$ snap run --shell appack
+$ xfreerdp3 <the command parameters under freerdp_command>
+```
+
+The OS chooses the RDP port used; it must not be fixed. It will be logged when starting your "configure" session.
+
+The next step is to take a complete snapshot of the VM's current state. The VM will be immediately shut down afterward.
+AppPack will create an internal snapshot of the VM's current state, so if you want to go back and edit your app you would have to undo the snapshot first.
 
 AppPack uses snapshots a lot, so make sure the OS is not downloading any updates or running any background tasks when
 you decide to take this final snapshot. If this happens, users will be re-running the background tasks or updates every
@@ -42,14 +52,11 @@ Additionally, be aware that once the snapshot is created, users will not be able
 
 * `appack creator snapshot`
 
-This will create a snapshot of your drive, and save the memory state of the VM. When the snapshot is finished, you can
-safely shut down your VM.
+If the snapshot was created successfully, a package will be created following the id and version specified in
+`AppPack.yaml`. This package is ready to be distributed to users.
 
-Next, it's time to package your app to share with the world.
-
-* `appack creator zip`
-
-This will zip all required files into a file called after the id and version you set in your AppPack.yaml.
+If you want to re-package your app without using the creator, you can create a zip archive including the same files
+as the package would have with the creator.
 
 ### Limitations
 

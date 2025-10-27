@@ -11,6 +11,9 @@ pub struct InstalledAppPackEntry {
     pub image: String,
     pub description: Option<String>,
     pub desktop_entries: Option<Vec<String>>,
+    pub snapshot_mode: AppPackSnapshotMode,
+    pub qemu_command: String,
+    pub freerdp_command: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -25,6 +28,22 @@ pub struct AppPackLocalSettings {
     pub save_folder: Rc<Path>,
     pub qemu_uri: Rc<str>,
     pub installed_file: Rc<Path>,
+}
+
+impl From<AppPackIndexFile> for InstalledAppPackEntry {
+    fn from(value: AppPackIndexFile) -> Self {
+        Self {
+            id: value.id,
+            version: value.version,
+            image: value.image,
+            name: value.name,
+            description: value.description,
+            desktop_entries: value.desktop_entries,
+            qemu_command: format!("{} {}", value.base_command, value.configure_append),
+            freerdp_command: value.freerdp_command,
+            snapshot_mode: value.snapshot,
+        }
+    }
 }
 
 impl Default for AppPackLocalSettings {
@@ -63,18 +82,19 @@ pub struct AppPackIndexFile {
     pub state: String,
     pub image: String,
     pub description: Option<String>,
-    pub snapshot: AppPackIndexSnapshotMode,
+    pub snapshot: AppPackSnapshotMode,
     pub readme: ReadmeConfiguration,
     pub base_command: String,
     pub install_append: String,
     pub configure_append: String,
     pub freerdp_command: String,
+    pub desktop_entries: Option<Vec<String>>,
 }
 
-#[derive(Debug, Deserialize)]
-pub enum AppPackIndexSnapshotMode {
+#[derive(Debug, Serialize, Deserialize)]
+pub enum AppPackSnapshotMode {
     OnClose,
-    Never
+    Never,
 }
 
 // Should we let the variables be replaced via the environment instead? Probably.
@@ -86,7 +106,9 @@ impl AppPackIndexFile {
         println!("Full boot install {}", full_command);
 
         let mut command = Command::new("bash");
-        command.arg("-c").arg(format!("qemu-system-x86_64 {}", full_command));
+        command
+            .arg("-c")
+            .arg(format!("qemu-system-x86_64 {}", full_command));
         command
     }
 
@@ -98,7 +120,9 @@ impl AppPackIndexFile {
         println!("Full boot configure {}", full_command);
 
         let mut command = Command::new("bash");
-        command.arg("-c").arg(format!("qemu-system-x86_64 {}", full_command));
+        command
+            .arg("-c")
+            .arg(format!("qemu-system-x86_64 {}", full_command));
         command
     }
 
@@ -117,9 +141,9 @@ impl AppPackIndexFile {
 #[derive(Debug, Deserialize)]
 pub struct ReadmeConfiguration {
     #[serde(default = "default_readme_folder")]
-    folder: String,
+    pub folder: String,
     #[serde(default = "default_readme_index")]
-    index: String,
+    pub index: String,
 }
 
 fn default_readme_folder() -> String {
