@@ -5,7 +5,7 @@ use zip::ZipWriter;
 use zip::write::{SimpleFileOptions, StreamWriter};
 
 pub fn zip_dir(
-    zip: &mut ZipWriter<StreamWriter<File>>,
+    zip: &mut ZipWriter<File>,
     zip_options: &SimpleFileOptions,
     dirpath: &Path,
 ) -> Result<()> {
@@ -24,7 +24,7 @@ pub fn zip_dir(
 }
 
 fn zip_dir_recursive(
-    zip: &mut ZipWriter<StreamWriter<File>>,
+    zip: &mut ZipWriter<File>,
     zip_options: &SimpleFileOptions,
     current_path: &Path,
     path_in_zip_prefix: &Path,

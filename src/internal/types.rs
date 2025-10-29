@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::rc::Rc;
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct InstalledAppPackEntry {
     pub id: String,
     pub version: String,
@@ -74,7 +74,7 @@ impl AppPackLocalSettings {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct AppPackIndexFile {
     pub name: String,
     pub id: String,
@@ -91,7 +91,7 @@ pub struct AppPackIndexFile {
     pub desktop_entries: Option<Vec<String>>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AppPackSnapshotMode {
     OnClose,
     Never,
@@ -138,7 +138,7 @@ impl AppPackIndexFile {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ReadmeConfiguration {
     #[serde(default = "default_readme_folder")]
     pub folder: String,

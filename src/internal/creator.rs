@@ -112,6 +112,71 @@ fn terminate_xfreerdp3() -> Result<()> {
     Ok(())
 }
 
+fn zip_appack(config: &AppPackIndexFile) -> Result<()> {
+    let zip_name = format!("{}_{}.zip", config.id, config.version);
+    let zip_file =
+        std::fs::File::create(zip_name).map_err(|e| anyhow!("Failed to create zip file: {}", e))?;
+    let mut zip = ZipWriter::new(zip_file);
+
+    // #[cfg(debug_assertions)]
+    let zip_options = SimpleFileOptions::default()
+        .compression_method(CompressionMethod::Stored)
+        .large_file(true)
+        .unix_permissions(0o755);
+
+    // #[cfg(not(debug_assertions))]
+    // let zip_options = SimpleFileOptions::default()
+    //     .compression_method(CompressionMethod::Deflated)
+    //     .compression_level(Some(9))
+    //     .unix_permissions(0o755);
+
+    // Add image
+    println!("Adding image file to package. This will take a while.");
+    zip.start_file("image.qcow2", zip_options)
+        .map_err(|e| anyhow!("Failed to add file to zip: {}", e))?;
+    let mut f1 =
+        std::fs::File::open(&config.image).map_err(|e| anyhow!("Failed to open file: {}", e))?;
+    std::io::copy(&mut f1, &mut zip).map_err(|e| anyhow!("Failed to copy file to zip: {}", e))?;
+    println!("Added 'image.qcow2' to package");
+
+    // Add readme folder
+    zip_dir(&mut zip, &zip_options, Path::new(&config.readme.folder))?;
+
+    // Add desktop entries
+    if let Some(entries) = &config.desktop_entries {
+        for entry in entries {
+            let entry_path = Path::new(entry);
+            let entry_file_name = entry_path.file_name().ok_or_else(|| {
+                anyhow!("Could not get file name of desktop entry {entry_path:?}")
+            })?;
+
+            let mut f1 =
+                std::fs::File::open(entry).map_err(|e| anyhow!("Failed to open file: {}", e))?;
+
+            let file_in_zip = format!("desktop/{}", entry_file_name.display());
+            zip.start_file(file_in_zip, zip_options)
+                .map_err(|e| anyhow!("Failed to add file to zip: {}", e))?;
+            std::io::copy(&mut f1, &mut zip)
+                .map_err(|e| anyhow!("Failed to copy file to zip: {}", e))?;
+            println!("Added '{entry_file_name:?}' to package");
+        }
+    }
+
+    // Add installed entry
+    let installed_appack_entry = InstalledAppPackEntry::from(config.clone());
+
+    let installed_entry_str = serde_yaml::to_string(&installed_appack_entry)?;
+    zip.start_file("AppPack.yaml", zip_options)
+        .map_err(|e| anyhow!("Failed to start file AppPack: {}", e))?;
+    zip.write_all(installed_entry_str.as_bytes())
+        .map_err(|e| anyhow!("Failed to write AppPack.yaml to zip: {}", e))?;
+
+    zip.finish()
+        .map_err(|e| anyhow!("Failed to finish zip: {}", e))?;
+
+    Ok(())
+}
+
 pub fn creator_new() -> Result<()> {
     let assets_path_str =
         std::env::var("SNAP").map_err(|e| anyhow!("Failed to get assets path: {}", e))?;
@@ -204,65 +269,69 @@ pub fn creator_snapshot() -> Result<()> {
     qmp.execute(&qmp::stop {}).context("Failed to stop VM")?;
 
     // 3. Take a snapshot (internal)
-    {
-        // In case we're not using -nodefaults, we have to check for devices where inserted is not null
-        let blocks = qmp
-            .execute(&qmp::query_block {})
-            .map_err(|e| anyhow!("Failed to get block info: {}", e))?;
-        let blocks = blocks.iter().filter(|b| b.inserted.is_some()).collect::<Vec<_>>();
+    // In case we're not using -nodefaults, we have to check for devices where inserted is not null
+    let blocks = qmp
+        .execute(&qmp::query_block {})
+        .map_err(|e| anyhow!("Failed to get block info: {}", e))?;
+    let blocks = blocks
+        .iter()
+        .filter(|b| b.inserted.is_some())
+        .collect::<Vec<_>>();
 
-        if blocks.len() != 1 {
-            return Err(anyhow!("Expected 1 block device, got {} ({blocks:?})", blocks.len()));
+    if blocks.len() != 1 {
+        return Err(anyhow!(
+            "Expected 1 block device, got {} ({blocks:?})",
+            blocks.len()
+        ));
+    }
+
+    let block = &blocks[0];
+    let block_node_name = block
+        .inserted
+        .clone()
+        .context("BlockInfo does not contain 'inserted' data.")?
+        .node_name
+        .context("BlockDeviceInfo does not contain 'node_name'.")?;
+
+    qmp.execute(&qmp::snapshot_save {
+        tag: "appack-init".to_string(),
+        vmstate: block_node_name.clone(),
+        devices: [block_node_name.clone()].to_vec(),
+        job_id: "appack-init-save".to_string(),
+    })
+    .context("Failed to make snapshot")?;
+
+    // Wait for the snapshot to finish
+    loop {
+        let jobs = qmp
+            .execute(&qmp::query_jobs {})
+            .map_err(|e| anyhow!("Failed to get jobs: {}", e))?;
+        let job = jobs.into_iter().find(|j| j.id == "appack-init-save");
+        if job.is_none() {
+            return Err(anyhow!("Failed to find job with id 'appack-init-save'"));
         }
 
-        let block = &blocks[0];
-        let block_node_name = block
-            .inserted
-            .clone()
-            .context("BlockInfo does not contain 'inserted' data.")?
-            .node_name
-            .context("BlockDeviceInfo does not contain 'node_name'.")?;
+        let job = job.unwrap();
 
-        qmp.execute(&qmp::snapshot_save {
-            tag: "appack-init".to_string(),
-            vmstate: block_node_name.clone(),
-            devices: [block_node_name].to_vec(),
-            job_id: "appack-init-save".to_string(),
-        })
-        .context("Failed to make snapshot")?;
+        println!("Job status: {:#?}", job);
 
-        // Wait for the snapshot to finish
-        loop {
-            let jobs = qmp
-                .execute(&qmp::query_jobs {})
-                .map_err(|e| anyhow!("Failed to get jobs: {}", e))?;
-            let job = jobs.into_iter().find(|j| j.id == "appack-init-save");
-            if job.is_none() {
-                return Err(anyhow!("Failed to find job with id 'appack-init-save'"));
+        match job.status {
+            qmp::JobStatus::concluded => {
+                if let Some(err) = job.error {
+                    return Err(anyhow!("Failed to take snapshot: {}", err));
+                }
+                println!("Snapshot complete");
+                break;
             }
-
-            let job = job.unwrap();
-
-            println!("Job status: {:#?}", job);
-
-            match job.status {
-                qmp::JobStatus::concluded => {
-                    if let Some(err) = job.error {
-                        return Err(anyhow!("Failed to take snapshot: {}", err));
-                    }
-                    println!("Snapshot complete");
-                    break;
-                }
-                qmp::JobStatus::created
-                | qmp::JobStatus::running
-                | qmp::JobStatus::waiting
-                | qmp::JobStatus::pending => {
-                    std::thread::sleep(std::time::Duration::from_secs(1));
-                    println!("Snapshot in progress, waiting...");
-                }
-                _ => {
-                    return Err(anyhow!("Snapshot in unknown state: {job:?}"));
-                }
+            qmp::JobStatus::created
+            | qmp::JobStatus::running
+            | qmp::JobStatus::waiting
+            | qmp::JobStatus::pending => {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                println!("Snapshot in progress, waiting...");
+            }
+            _ => {
+                return Err(anyhow!("Snapshot in unknown state: {job:?}"));
             }
         }
     }
@@ -272,67 +341,27 @@ pub fn creator_snapshot() -> Result<()> {
         .map_err(|e| anyhow!("Failed to quit QMP: {}", e))?;
 
     // 5. Zip files
-    {
-        let zip_name = format!("{}_{}.zip", config.id, config.version);
-        let zip_file = std::fs::File::create(zip_name)
-            .map_err(|e| anyhow!("Failed to create zip file: {}", e))?;
-        let mut zip = ZipWriter::new_stream(zip_file);
+    match zip_appack(&config) {
+        Ok(_) => println!("AppPack created successfully"),
+        Err(e) => {
+            let command = Command::new("qemu-img")
+                .arg("snapshot")
+                .arg("-d")
+                .arg("appack-init")
+                .arg(config.image)
+                .status()
+                .context("Failed to delete snapshot")?;
 
-        // #[cfg(debug_assertions)]
-        let zip_options = SimpleFileOptions::default()
-            .compression_method(CompressionMethod::Stored)
-            .unix_permissions(0o755);
-
-        // #[cfg(not(debug_assertions))]
-        // let zip_options = SimpleFileOptions::default()
-        //     .compression_method(CompressionMethod::Deflated)
-        //     .compression_level(Some(9))
-        //     .unix_permissions(0o755);
-
-        // Add image
-        println!("Adding image file to package. This will take a while.");
-        zip.start_file("image.qcow2", zip_options)
-            .map_err(|e| anyhow!("Failed to add file to zip: {}", e))?;
-        let mut f1 = std::fs::File::open(&config.image)
-            .map_err(|e| anyhow!("Failed to open file: {}", e))?;
-        std::io::copy(&mut f1, &mut zip)
-            .map_err(|e| anyhow!("Failed to copy file to zip: {}", e))?;
-        println!("Added 'image.qcow2' to package");
-
-        // Add readme folder
-        zip_dir(&mut zip, &zip_options, Path::new(&config.readme.folder))?;
-
-        // Add desktop entries
-        if let Some(entries) = &config.desktop_entries {
-            for entry in entries {
-                let entry_path = Path::new(entry);
-                let entry_file_name = entry_path.file_name().ok_or_else(|| {
-                    anyhow!("Could not get file name of desktop entry {entry_path:?}")
-                })?;
-
-                let mut f1 = std::fs::File::open(entry)
-                    .map_err(|e| anyhow!("Failed to open file: {}", e))?;
-
-                let file_in_zip = format!("desktop/{}", entry_file_name.display());
-                zip.start_file(file_in_zip, zip_options)
-                    .map_err(|e| anyhow!("Failed to add file to zip: {}", e))?;
-                std::io::copy(&mut f1, &mut zip)
-                    .map_err(|e| anyhow!("Failed to copy file to zip: {}", e))?;
-                println!("Added '{entry_file_name:?}' to package");
+            if !command.success() {
+                println!(
+                    "Failed to delete snapshot. Please delete all snapshots manually and try again."
+                );
+            } else {
+                println!("Snapshot deleted. You can safely retry.");
             }
+
+            return Err(e);
         }
-
-        // Add installed entry
-        let installed_appack_entry = InstalledAppPackEntry::from(config);
-
-        let installed_entry_str = serde_yaml::to_string(&installed_appack_entry)?;
-        zip.start_file("AppPack.yaml", zip_options)
-            .map_err(|e| anyhow!("Failed to start file AppPack: {}", e))?;
-        zip.write_all(installed_entry_str.as_bytes())
-            .map_err(|e| anyhow!("Failed to write AppPack.yaml to zip: {}", e))?;
-
-        zip.finish()
-            .map_err(|e| anyhow!("Failed to finish zip: {}", e))?;
     }
 
     Ok(())
