@@ -11,24 +11,28 @@ apps:
     command: bin/appack
     environment:
       LD_LIBRARY_PATH: ${LD_LIBRARY_PATH}:${SNAP}/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/pulseaudio
+    # TODO: cleanup useless plugs
     plugs:
-      - home-all
-      - network
-      - alsa
-      - pulseaudio
-      - x11
-      - wayland
-      - audio-playback
-      - audio-record
-      - kvm
-      - home
-      - opengl
-      - process-control
-      - raw-usb
-      - removable-media
-      - screen-inhibit-control
-      - network-bind
-      - network-control
+      - desktop # probably not needed? Check if personal-files is enough
+      - home-all # TO REMOVE if we don't need to launch as root
+      - network # ?
+      - alsa # Probably needed
+      - pulseaudio # Probably needed
+      - x11 # Probably needed
+      - wayland # Probably needed
+      - audio-playback # Probably needed
+      - audio-record # Probably needed
+      - kvm # Needed
+      - home # Needed
+      - opengl # Needed
+      - process-control # Probably needed??
+      - raw-usb # Probably needed??
+      - removable-media # Will figure that one later
+      - screen-inhibit-control # ?
+      - network-bind # ?
+      - network-control # Probably NOT needed
+      - dot-local-share-applications # to add desktop entries
+      - dot-local-share-icons # to add desktop entries icons
 
 #  qemu:
 #    command: usr/bin/qemu-system-x86_64
@@ -270,11 +274,18 @@ parts:
       - -usr/share/qemu/qemu-nsis.bmp
       - -lib/systemd/system/multipath-tools-boot.service
 
-# Needed so we can access the current user's home directory as sudo
 plugs:
-  home-all:
+  home-all: # Needed to access the current user's home directory as sudo
     interface: home
     read: all
+  dot-local-share-applications:
+    interface: personal-files
+    write:
+      - $HOME/.local/share/applications
+  dot-local-share-icons:
+    interface: personal-files
+    write:
+      - $HOME/.local/share/icons
 
 #layout:
 #  /var/lib/libvirt/images:

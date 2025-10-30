@@ -1,13 +1,13 @@
 mod internal;
 
-use crate::internal::creator::{creator_boot, creator_boot_install, creator_new, creator_snapshot};
+use crate::internal::creator::{creator_boot, creator_boot_install, creator_new, creator_snapshot, creator_test};
 use crate::internal::info::print_info;
-use crate::internal::install_appack::install_appack;
+use crate::internal::install_appack::{install_appack};
 use crate::internal::types::AppPackLocalSettings;
 use crate::internal::uninstall_appack::uninstall_appack;
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Parser)]
 #[clap(author, version, about, long_about = None)]
@@ -33,6 +33,7 @@ enum CliAction {
     },
 
     Info,
+    Test,
 }
 
 #[derive(Debug, Subcommand, ValueEnum, Clone)]
@@ -46,7 +47,7 @@ enum CliCreatorAction {
 fn main() -> Result<()> {
     let args = Cli::parse();
 
-    let settings = AppPackLocalSettings::from_env();
+    let settings = AppPackLocalSettings::default();
 
     match args.action {
         CliAction::Install { file } => install_appack(file, settings)?,
@@ -67,7 +68,10 @@ fn main() -> Result<()> {
         },
         CliAction::Info => {
             print_info(&settings);
-        }
+        },
+        CliAction::Test => {
+            creator_test()?;
+        },
     }
 
     Ok(())

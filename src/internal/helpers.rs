@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use std::fs::File;
 use std::path::Path;
 use zip::ZipWriter;
-use zip::write::{SimpleFileOptions, StreamWriter};
+use zip::write::{SimpleFileOptions};
 
 pub fn zip_dir(
     zip: &mut ZipWriter<File>,

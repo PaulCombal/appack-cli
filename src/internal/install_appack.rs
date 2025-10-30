@@ -1,17 +1,15 @@
-use crate::internal::installed_helpers::{get_installed, save_installed};
-use crate::internal::types::{
-    AppPackIndexFile, AppPackLocalSettings, InstalledAppPackEntry, InstalledAppPacks,
-};
-use anyhow::{Result, anyhow};
+use crate::internal::types::{AppPackIndexFile, AppPackLocalSettings, InstalledAppPackEntry, InstalledAppPacks};
+use anyhow::{Result, anyhow, Context};
 use std::collections::HashSet;
+use std::fmt::format;
 use std::fs::File;
 use std::io;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
+use std::process::Command;
 use zip::ZipArchive;
 
-fn extract_config(archive: &mut ZipArchive<File>) -> Result<AppPackIndexFile> {
+fn extract_config(archive: &mut ZipArchive<File>) -> Result<InstalledAppPackEntry> {
     let mut file = archive
         .by_name("AppPack.yaml")
         .map_err(|_| anyhow!("File 'AppPack.yaml' not found in archive"))?;
@@ -24,71 +22,93 @@ fn extract_config(archive: &mut ZipArchive<File>) -> Result<AppPackIndexFile> {
 
 fn extract_files(
     archive: &mut ZipArchive<File>,
-    config: &AppPackIndexFile,
+    new_app_entry: &InstalledAppPackEntry,
     local_settings: &AppPackLocalSettings,
 ) -> Result<()> {
-    let save_filename = config.state.as_str();
-    let save_fullpath = PathBuf::from(local_settings.save_folder.as_ref()).join(save_filename);
+    let image_filename = new_app_entry.image.as_str();
+    let new_app_id = new_app_entry.id.as_str();
+    let new_app_version = new_app_entry.version.as_str();
+    let new_app_base_dir = local_settings.home_dir.join(new_app_id).join(new_app_version);
 
-    if save_fullpath.exists() {
+    if new_app_base_dir.exists() {
         return Err(anyhow!(
-            "Save file already exists in {}: {save_filename}",
-            local_settings.save_folder.display()
+            "App directory already exists: {}",
+            new_app_base_dir.display()
         ));
     }
 
-    let image_filename = config.image.as_str();
-    let image_fullpath = PathBuf::from(local_settings.images_folder.as_ref()).join(image_filename);
 
-    if image_fullpath.exists() {
-        return Err(anyhow!(
-            "Image file already exists in {}: {image_filename}",
-            local_settings.images_folder.display()
-        ));
+    for entry in new_app_entry.desktop_entries.clone().unwrap() {
+        archive
+            .by_name(&format!("desktop/{entry}"))
+            .map_err(|_| anyhow!("Desktop entry '{}' not found in archive", entry))?;
+
+        let entry_fullpath = local_settings.desktop_entries_dir.join(format!("{new_app_version}_{entry}"));
+        if entry_fullpath.exists() {
+            println!("Desktop entry already exists: {}", entry_fullpath.display());
+            return Err(anyhow!("Desktop entry already exists"));
+        }
     }
 
-    println!("Extracting files (1/2)..");
+    std::fs::create_dir_all(&new_app_base_dir)?;
 
-    {
-        let mut save_file = archive
-            .by_name(save_filename)
-            .map_err(|_| anyhow!("File '{}' not found in archive", save_filename))?;
-
-        let mut outfile = File::create(&save_fullpath)
-            .map_err(|e| anyhow!("Unable to create file {}: {e}", save_fullpath.display()))?;
-        io::copy(&mut save_file, &mut outfile)?;
-    }
-
-    println!("Extracting files (2/2)..");
+    println!("Extracting app data.. This may take a while.");
 
     {
         let mut image_file = archive
             .by_name(image_filename)
-            .map_err(|_| anyhow!("File '{}' not found in archive", image_filename))?;
+            .map_err(|_| anyhow!("Image '{}' not found in archive", image_filename))?;
+        let image_fullpath = new_app_base_dir.join(image_filename);
 
         let mut outfile = File::create(&image_fullpath)
-            .map_err(|e| anyhow!("Unable to create file {}: {e}", save_fullpath.display()))?;
+            .map_err(|e| anyhow!("Unable to create file {}: {e}", image_fullpath.display()))?;
         io::copy(&mut image_file, &mut outfile)?;
+    }
+
+    println!("Extracting desktop entries..");
+
+    {
+        for entry in new_app_entry.desktop_entries.clone().unwrap() {
+            let mut entry_file = archive
+                .by_name(&format!("desktop/{entry}"))
+                .map_err(|_| anyhow!("Desktop entry '{}' not found in archive", entry))?;
+
+            let entry_fullpath = local_settings.desktop_entries_dir.join(format!("{new_app_version}_{entry}"));
+            let mut outfile = File::create(&entry_fullpath)
+                .context("Unable to create desktop entry file")?;
+
+            io::copy(&mut entry_file, &mut outfile)?;
+        }
+
+        // TODO: extract icons
     }
 
     Ok(())
 }
 
+/// Checks that the following files are present:
+/// * image file
+/// * desktop entries
 fn check_valid_app_pack(
     archive: &mut ZipArchive<File>,
-    config: &AppPackIndexFile,
+    new_app_entry: &InstalledAppPackEntry,
     installed: &InstalledAppPacks,
 ) -> Result<()> {
     for entry in installed.installed.iter() {
-        if entry.id == config.id {
-            println!("Domain already installed: {}", entry.id);
+        if entry.id == new_app_entry.id {
+            println!("AppPack already installed: {}", entry.id);
             println!("Installed version: {}", entry.version);
-            println!("File version: {}", config.version);
-            return Err(anyhow!("Domain already exists"));
+            println!("File version: {}", new_app_entry.version);
+            return Err(anyhow!("AppPack already installed"));
         }
     }
 
-    let required_files = ["define.xml", config.state.as_str(), config.image.as_str()];
+    let mut required_files = [new_app_entry.image.clone()].to_vec();
+    if let Some(entries) = new_app_entry.desktop_entries.clone() {
+        for entry in entries {
+            required_files.push(format!("desktop/{entry}"));
+        }
+    }
 
     // Collect all file names present in the archive into a HashSet
     let mut present_files = HashSet::new();
@@ -101,7 +121,7 @@ fn check_valid_app_pack(
     // Check which required files are missing
     let missing_files: Vec<_> = required_files
         .iter()
-        .filter(|&&f| !present_files.contains(f))
+        .filter(|&f| !present_files.contains(f))
         .collect();
 
     if !missing_files.is_empty() {
@@ -111,83 +131,28 @@ fn check_valid_app_pack(
     Ok(())
 }
 
-fn add_and_save_installed(
-    config: &AppPackIndexFile,
-    settings: &AppPackLocalSettings,
-    installed: &mut InstalledAppPacks,
-) -> Result<()> {
-    todo!();
-
-    // let new_entry = InstalledAppPackEntry {
-    //     id: config.id.clone(),
-    //     description: config.description.clone(),
-    //     version: config.version.clone(),
-    //     name: config.name.clone(),
-    //     image: config.image.clone(),
-    //     desktop_entries: None, // TODO
-    // };
-    //
-    // installed.installed.push(new_entry);
-    //
-    // save_installed(installed, settings)?;
-
-    Ok(())
-}
-
-fn take_snapshot(path: &Path) -> Result<()> {
-    let mut command = Command::new("qemu-img");
-    command.arg("snapshot").arg("-c").arg("appack0").arg(path);
-
-    let status = command
-        .status()
-        .map_err(|e| anyhow!("Unable to spawn qemu-img: {e}"));
-
-    match status {
-        Ok(_) => {}
-        Err(e) => {
-            return Err(anyhow!("Unable to spawn qemu-img: {e}"));
-        }
-    }
-
-    Ok(())
-
-    // builder
-    //     .add_arg("-name", Some(format!("{},process={}", config.domain, config.domain)))
-    //     .add_arg("-drive", Some(format!("file={},if=none,id=drive-virtio-disk0,format=qcow2,cache=none,discard=unmap", image_path.display())))
-    //     .add_arg("-smp", Some("2,cores=2,threads=1,sockets=1".to_string())) // TODO
-    //     .add_arg("-m", Some("4G".to_string())) // TODO
-    //     .add_arg("-balloon", Some("virtio".to_string())) // TODO (uses-virtio-balloon or smth)
-    // ;
-}
-
+// Todo: make this atomic as in if it fails then the halfway done files should be removed
 pub fn install_appack(file_path: PathBuf, settings: AppPackLocalSettings) -> Result<()> {
     let file =
         File::open(&file_path).map_err(|e| anyhow!("Unable to open file {file_path:?}: {e}"))?;
     let mut archive =
         ZipArchive::new(file).map_err(|e| anyhow!("Unable to file as zip archive: {e}"))?;
 
-    // DEV ONLY
-    // archive.file_names().for_each(|file| {
-    //     println!("{}", file);
-    // });
-
-    let config = extract_config(&mut archive)?;
-    let mut installed = get_installed(&settings)?;
-
-    check_valid_app_pack(&mut archive, &config, &installed)?;
-    extract_files(&mut archive, &config, &settings)?;
-
-    // 1. Create snapshot
-    {
-        let installed_image = PathBuf::from(settings.images_folder.as_ref()).join(config.image);
-        take_snapshot(&installed_image)?;
-    }
+    settings.check_ok()?;
+    let new_app_entry = extract_config(&mut archive)?;
+    let mut installed_apps = settings.get_installed()?;
+    check_valid_app_pack(&mut archive, &new_app_entry, &installed_apps)?;
+    extract_files(&mut archive, &new_app_entry, &settings)?;
 
     // 2. Add to installed list
+    installed_apps.installed.push(new_app_entry.clone());
+    settings.save_installed(installed_apps)?;
 
-    return Ok(());
+    // TODO: Setup desktop integration
+    // For now, we can just print the desktop files content and ask user to copy it manually
+    // https://forum.snapcraft.io/t/managing-desktop-entries-at-runtime/49149
 
-    // 2. Setup desktop integration
+
 
     Ok(())
 }

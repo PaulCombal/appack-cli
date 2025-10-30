@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::rc::Rc;
+use anyhow::anyhow;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct InstalledAppPackEntry {
@@ -24,10 +24,9 @@ pub struct InstalledAppPacks {
 
 #[derive(Debug)]
 pub struct AppPackLocalSettings {
-    pub images_folder: Rc<Path>,
-    pub save_folder: Rc<Path>,
-    pub qemu_uri: Rc<str>,
-    pub installed_file: Rc<Path>,
+    pub installed_file: PathBuf,
+    pub home_dir: PathBuf,
+    pub desktop_entries_dir: PathBuf,
 }
 
 impl From<AppPackIndexFile> for InstalledAppPackEntry {
@@ -38,7 +37,7 @@ impl From<AppPackIndexFile> for InstalledAppPackEntry {
             image: value.image,
             name: value.name,
             description: value.description,
-            desktop_entries: value.desktop_entries,
+            desktop_entries: None,
             qemu_command: format!("{} {}", value.base_command, value.configure_append),
             freerdp_command: value.freerdp_command,
             snapshot_mode: value.snapshot,
@@ -48,29 +47,74 @@ impl From<AppPackIndexFile> for InstalledAppPackEntry {
 
 impl Default for AppPackLocalSettings {
     fn default() -> Self {
-        let snap_home = std::env::var("SNAP_USER_COMMON").unwrap_or("/etc/appack".to_string());
+        let snap_home = std::env::var("SNAP_USER_COMMON").unwrap();
         let snap_home = PathBuf::from(snap_home);
+        let user_real_home = std::env::var("SNAP_REAL_HOME").unwrap();
+        let user_real_home = PathBuf::from(user_real_home);
         Self {
-            images_folder: Rc::from(snap_home.join("images")),
-            save_folder: Rc::from(snap_home.join("save")),
-            qemu_uri: Rc::from("qemu:///system"),
-            installed_file: Rc::from(snap_home.join("installed.yaml")),
+            home_dir: snap_home.clone(),
+            installed_file: snap_home.join("installed.yaml"),
+            desktop_entries_dir: user_real_home.join(".local").join("share").join("applications"),
         }
     }
 }
 
 impl AppPackLocalSettings {
-    pub fn from_env() -> Self {
-        let mut tmp = Self::default();
-        if let Ok(appack_home) = std::env::var("APPACK_HOME") {
-            let home = PathBuf::from(appack_home);
-            tmp.installed_file = Rc::from(home.join("installed.yaml"));
+    pub fn check_ok(&self) -> anyhow::Result<()> {
+        if !self.home_dir.exists() {
+            return Err(anyhow!("Home directory does not exist: {}", self.home_dir.display()));
         }
 
-        if let Ok(libvirt_default_uri) = std::env::var("LIBVIRT_DEFAULT_URI") {
-            tmp.qemu_uri = Rc::from(libvirt_default_uri);
+        if !self.desktop_entries_dir.exists() {
+            return Err(anyhow!("Desktop entries directory does not exist: {}", self.desktop_entries_dir.display()));
         }
-        tmp
+
+        Ok(())
+    }
+
+    pub fn get_installed(&self) -> anyhow::Result<InstalledAppPacks> {
+        let installed_filepath = self.installed_file.clone();
+
+        let installed_app_packs: InstalledAppPacks = if installed_filepath.exists() {
+            let content = std::fs::read_to_string(&installed_filepath).map_err(|e| {
+                anyhow!(
+                "Failed to read installed file {}: {}",
+                installed_filepath.display(),
+                e
+            )
+            })?;
+            serde_yaml::from_str(&content).map_err(|e| {
+                anyhow!(
+                "Failed to parse installed file {}: {}",
+                installed_filepath.display(),
+                e
+            )
+            })?
+        } else {
+            InstalledAppPacks {
+                installed: Vec::new(),
+            }
+        };
+
+        Ok(installed_app_packs)
+    }
+
+    pub fn save_installed(
+        &self,
+        installed_app_packs: InstalledAppPacks,
+    ) -> anyhow::Result<()> {
+        let installed_filepath = self.installed_file.clone();
+        let content = serde_yaml::to_string(&installed_app_packs)
+            .map_err(|e| anyhow!("Failed to serialize installed app packs: {}", e))?;
+        std::fs::write(&installed_filepath, content).map_err(|e| {
+            anyhow!(
+            "Failed to write installed file {}: {}",
+            installed_filepath.display(),
+            e
+        )
+        })?;
+
+        Ok(())
     }
 }
 
@@ -79,7 +123,7 @@ pub struct AppPackIndexFile {
     pub name: String,
     pub id: String,
     pub version: String,
-    pub state: String,
+    pub state: Option<String>,
     pub image: String,
     pub description: Option<String>,
     pub snapshot: AppPackSnapshotMode,

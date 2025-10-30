@@ -119,16 +119,17 @@ fn zip_appack(config: &AppPackIndexFile) -> Result<()> {
     let mut zip = ZipWriter::new(zip_file);
 
     // #[cfg(debug_assertions)]
-    let zip_options = SimpleFileOptions::default()
-        .compression_method(CompressionMethod::Stored)
-        .large_file(true)
-        .unix_permissions(0o755);
+    // let zip_options = SimpleFileOptions::default()
+    //     .compression_method(CompressionMethod::Stored)
+    //     .large_file(true)
+    //     .unix_permissions(0o755);
 
     // #[cfg(not(debug_assertions))]
-    // let zip_options = SimpleFileOptions::default()
-    //     .compression_method(CompressionMethod::Deflated)
-    //     .compression_level(Some(9))
-    //     .unix_permissions(0o755);
+    let zip_options = SimpleFileOptions::default()
+        .large_file(true)
+        .compression_method(CompressionMethod::Zstd)
+        // .compression_level(Some(9))
+        .unix_permissions(0o755);
 
     // Add image
     println!("Adding image file to package. This will take a while.");
@@ -137,13 +138,18 @@ fn zip_appack(config: &AppPackIndexFile) -> Result<()> {
     let mut f1 =
         std::fs::File::open(&config.image).map_err(|e| anyhow!("Failed to open file: {}", e))?;
     std::io::copy(&mut f1, &mut zip).map_err(|e| anyhow!("Failed to copy file to zip: {}", e))?;
-    println!("Added 'image.qcow2' to package");
+    println!("Added \"image.qcow2\" to package");
 
     // Add readme folder
     zip_dir(&mut zip, &zip_options, Path::new(&config.readme.folder))?;
 
+    // Does not copy the desktop entries
+    let mut installed_appack_entry = InstalledAppPackEntry::from(config.clone());
+
     // Add desktop entries
     if let Some(entries) = &config.desktop_entries {
+        installed_appack_entry.desktop_entries = Some(Vec::new());
+
         for entry in entries {
             let entry_path = Path::new(entry);
             let entry_file_name = entry_path.file_name().ok_or_else(|| {
@@ -154,16 +160,14 @@ fn zip_appack(config: &AppPackIndexFile) -> Result<()> {
                 std::fs::File::open(entry).map_err(|e| anyhow!("Failed to open file: {}", e))?;
 
             let file_in_zip = format!("desktop/{}", entry_file_name.display());
-            zip.start_file(file_in_zip, zip_options)
+            zip.start_file(&file_in_zip, zip_options)
                 .map_err(|e| anyhow!("Failed to add file to zip: {}", e))?;
             std::io::copy(&mut f1, &mut zip)
                 .map_err(|e| anyhow!("Failed to copy file to zip: {}", e))?;
-            println!("Added '{entry_file_name:?}' to package");
+            installed_appack_entry.desktop_entries.as_mut().unwrap().push(entry_file_name.to_string_lossy().to_string());
+            println!("Added {entry_file_name:?} to package");
         }
     }
-
-    // Add installed entry
-    let installed_appack_entry = InstalledAppPackEntry::from(config.clone());
 
     let installed_entry_str = serde_yaml::to_string(&installed_appack_entry)?;
     zip.start_file("AppPack.yaml", zip_options)
@@ -286,10 +290,13 @@ pub fn creator_snapshot() -> Result<()> {
     }
 
     let block = &blocks[0];
-    let block_node_name = block
-        .inserted
-        .clone()
-        .context("BlockInfo does not contain 'inserted' data.")?
+    let block_inserted = block.inserted.clone().context("BlockInfo does not contain 'inserted' data.")?;
+
+    if block_inserted.image.base.snapshots.is_some() {
+        return Err(anyhow!("Block device already has snapshots"));
+    }
+
+    let block_node_name = block_inserted
         .node_name
         .context("BlockDeviceInfo does not contain 'node_name'.")?;
 
@@ -365,4 +372,9 @@ pub fn creator_snapshot() -> Result<()> {
     }
 
     Ok(())
+}
+
+pub fn creator_test() -> Result<()> {
+    let config = read_config(Path::new("AppPack.yaml"))?;
+    zip_appack(&config)
 }
