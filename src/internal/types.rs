@@ -1,3 +1,4 @@
+use std::io::Read;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -179,6 +180,24 @@ impl AppPackIndexFile {
         let mut command = Command::new("bash");
         command.arg("-c").arg(format!("xfreerdp3 {}", full_command));
         command
+    }
+
+    pub fn new(path: &Path) -> anyhow::Result<Self> {
+        let mut file = std::fs::File::open(path)
+            .map_err(|e| anyhow!("Unable to open config file at {}: {}", path.display(), e))?;
+
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer)
+            .map_err(|e| anyhow!("Unable to read config file contents: {}", e))?;
+
+        let cfg: Self = serde_yaml::from_slice(&buffer).map_err(|e| anyhow!("Invalid YAML format in file: {:?}", e))?;
+        let forbidden_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|', ' '];
+
+        if cfg.version.chars().any(|c| forbidden_chars.contains(&c)) {
+            return Err(anyhow!("Invalid character in version: {}", cfg.version));
+        }
+
+        Ok(cfg)
     }
 }
 

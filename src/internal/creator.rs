@@ -23,17 +23,6 @@ fn create_image(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn read_config(path: &Path) -> Result<AppPackIndexFile> {
-    let mut file = std::fs::File::open(path)
-        .map_err(|e| anyhow!("Unable to open config file at {}: {}", path.display(), e))?;
-
-    let mut buffer = Vec::new();
-    file.read_to_end(&mut buffer)
-        .map_err(|e| anyhow!("Unable to read config file contents: {}", e))?;
-
-    serde_yaml::from_slice(&buffer).map_err(|e| anyhow!("Invalid YAML format in file: {:?}", e))
-}
-
 // Yes there is a race condition here. This is a problem for later.
 fn get_os_assigned_port() -> Result<u16> {
     let listener = TcpListener::bind(format!("{}:0", Ipv4Addr::LOCALHOST))?;
@@ -211,7 +200,7 @@ pub fn creator_new() -> Result<()> {
 }
 
 pub fn creator_boot_install() -> Result<()> {
-    let config = read_config(Path::new("AppPack.yaml"))?;
+    let config = AppPackIndexFile::new(Path::new("AppPack.yaml"))?;
 
     let mut command = config.get_boot_install_command();
 
@@ -221,7 +210,7 @@ pub fn creator_boot_install() -> Result<()> {
 }
 
 pub fn creator_boot() -> Result<()> {
-    let config = read_config(Path::new("AppPack.yaml"))?;
+    let config = AppPackIndexFile::new(Path::new("AppPack.yaml"))?;
     let free_port = get_os_assigned_port()?;
 
     let mut qemu_command = config.get_boot_configure_command(free_port);
@@ -252,7 +241,7 @@ pub fn creator_boot() -> Result<()> {
 // It is probably possible to optimize this further.
 pub fn creator_snapshot() -> Result<()> {
     // We read the config first to validate its contents before proceeding with the snapshot
-    let config = read_config(Path::new("AppPack.yaml"))?;
+    let config = AppPackIndexFile::new(Path::new("AppPack.yaml"))?;
     let socket_addr = "./qmp-appack.sock";
     let stream = UnixStream::connect(socket_addr)
         .map_err(|e| anyhow!("Failed to connect to QMP socket: {}", e))?;
@@ -375,6 +364,6 @@ pub fn creator_snapshot() -> Result<()> {
 }
 
 pub fn creator_test() -> Result<()> {
-    let config = read_config(Path::new("AppPack.yaml"))?;
+    let config = AppPackIndexFile::new(Path::new("AppPack.yaml"))?;
     zip_appack(&config)
 }

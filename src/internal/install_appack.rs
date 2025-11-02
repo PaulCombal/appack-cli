@@ -94,6 +94,13 @@ fn check_valid_app_pack(
     new_app_entry: &InstalledAppPackEntry,
     installed: &InstalledAppPacks,
 ) -> Result<()> {
+    // TODO: deduplicate with AppPackIndexFile::new
+    let forbidden_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|', ' '];
+
+    if new_app_entry.version.chars().any(|c| forbidden_chars.contains(&c)) {
+        return Err(anyhow!("Invalid character in version: {}", new_app_entry.version));
+    }
+
     for entry in installed.installed.iter() {
         if entry.id == new_app_entry.id {
             println!("AppPack already installed: {}", entry.id);

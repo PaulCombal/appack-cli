@@ -8,6 +8,7 @@ use crate::internal::uninstall_appack::uninstall_appack;
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::{Path, PathBuf};
+use crate::internal::list_installed::list_installed;
 
 #[derive(Debug, Parser)]
 #[clap(author, version, about, long_about = None)]
@@ -31,6 +32,9 @@ enum CliAction {
     Creator {
         action: CliCreatorAction,
     },
+
+    #[clap(alias = "li")]
+    ListInstalled,
 
     Info,
     Test,
@@ -66,6 +70,9 @@ fn main() -> Result<()> {
                 creator_snapshot()?;
             }
         },
+        CliAction::ListInstalled => {
+            list_installed(settings)?;
+        }
         CliAction::Info => {
             print_info(&settings);
         },
