@@ -47,11 +47,25 @@ impl From<AppPackIndexFile> for InstalledAppPackEntry {
 }
 
 impl Default for AppPackLocalSettings {
+
+    #[cfg(not(debug_assertions))]
     fn default() -> Self {
         let snap_home = std::env::var("SNAP_USER_COMMON").unwrap();
         let snap_home = PathBuf::from(snap_home);
         let user_real_home = std::env::var("SNAP_REAL_HOME").unwrap();
         let user_real_home = PathBuf::from(user_real_home);
+        Self {
+            home_dir: snap_home.clone(),
+            installed_file: snap_home.join("installed.yaml"),
+            desktop_entries_dir: user_real_home.join(".local").join("share").join("applications"),
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    fn default() -> Self {
+        let home_str = std::env::var("HOME").unwrap();
+        let snap_home = PathBuf::from(&home_str).join("snap").join("appack").join("common");
+        let user_real_home = PathBuf::from(home_str);
         Self {
             home_dir: snap_home.clone(),
             installed_file: snap_home.join("installed.yaml"),
@@ -116,6 +130,10 @@ impl AppPackLocalSettings {
         })?;
 
         Ok(())
+    }
+
+    pub fn get_app_home_dir(&self, app: &InstalledAppPackEntry) -> PathBuf {
+        self.home_dir.join(app.id.clone()).join(app.version.clone())
     }
 }
 

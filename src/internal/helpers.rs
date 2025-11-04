@@ -1,5 +1,6 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, Context};
 use std::fs::File;
+use std::net::{Ipv4Addr, TcpListener};
 use std::path::Path;
 use zip::ZipWriter;
 use zip::write::{SimpleFileOptions};
@@ -42,20 +43,26 @@ fn zip_dir_recursive(
         if path.is_dir() {
             let dir_name_in_zip = format!("{}/", path_in_zip_str);
             zip.add_directory(&dir_name_in_zip, *zip_options)
-                .map_err(|e| anyhow!("Failed to add directory to zip: {}", e))?;
+                .context("Failed to add directory to zip")?;
 
             zip_dir_recursive(zip, zip_options, &path, &path_in_zip)?;
         } else if path.is_file() {
             zip.start_file(path_in_zip_str, *zip_options)
-                .map_err(|e| anyhow!("Failed to start file in zip: {}", e))?;
+                .context("Failed to start file in zip")?;
 
             let mut f =
-                File::open(&path).map_err(|e| anyhow!("Failed to open file {:?}: {}", path, e))?;
+                File::open(&path).context(format!("Failed to open file {path:?}"))?;
 
             std::io::copy(&mut f, zip)
-                .map_err(|e| anyhow!("Failed to copy file {:?} to zip: {}", path, e))?;
+                .context(format!("Failed to copy file {path:?} to zip"))?;
         }
     }
 
     Ok(())
+}
+
+pub fn get_os_assigned_port() -> Result<u16> {
+    let listener = TcpListener::bind(format!("{}:0", Ipv4Addr::LOCALHOST))?;
+    let port = listener.local_addr()?.port();
+    Ok(port)
 }

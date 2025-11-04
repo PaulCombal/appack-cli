@@ -1,4 +1,4 @@
-use crate::internal::helpers::zip_dir;
+use crate::internal::helpers::{get_os_assigned_port, zip_dir};
 use crate::internal::types::{AppPackIndexFile, InstalledAppPackEntry};
 use anyhow::{Context, Result, anyhow};
 use qapi::{Qmp, qmp};
@@ -21,13 +21,6 @@ fn create_image(path: &Path) -> Result<()> {
         .map_err(|e| anyhow!("Failed to create image: {}", e))?;
 
     Ok(())
-}
-
-// Yes there is a race condition here. This is a problem for later.
-fn get_os_assigned_port() -> Result<u16> {
-    let listener = TcpListener::bind(format!("{}:0", Ipv4Addr::LOCALHOST))?;
-    let port = listener.local_addr()?.port();
-    Ok(port)
 }
 
 // fn get_xfreerdp3_pids() -> Result<Vec<i32>> {

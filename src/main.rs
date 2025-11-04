@@ -8,6 +8,7 @@ use crate::internal::uninstall_appack::uninstall_appack;
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::{Path, PathBuf};
+use crate::internal::launch::launch;
 use crate::internal::list_installed::list_installed;
 
 #[derive(Debug, Parser)]
@@ -36,8 +37,14 @@ enum CliAction {
     #[clap(alias = "li")]
     ListInstalled,
 
+    Launch {
+        id: String,
+        version: Option<String>,
+        rdp_args: Option<String>,
+    },
+
     Info,
-    Test,
+    Test,// TODO: remove
 }
 
 #[derive(Debug, Subcommand, ValueEnum, Clone)]
@@ -79,6 +86,9 @@ fn main() -> Result<()> {
         CliAction::Test => {
             creator_test()?;
         },
+        CliAction::Launch {id, version, rdp_args} => {
+            launch(&settings, id, version, rdp_args)?;
+        }
     }
 
     Ok(())

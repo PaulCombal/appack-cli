@@ -26,9 +26,8 @@ fn extract_files(
     local_settings: &AppPackLocalSettings,
 ) -> Result<()> {
     let image_filename = new_app_entry.image.as_str();
-    let new_app_id = new_app_entry.id.as_str();
     let new_app_version = new_app_entry.version.as_str();
-    let new_app_base_dir = local_settings.home_dir.join(new_app_id).join(new_app_version);
+    let new_app_base_dir = local_settings.get_app_home_dir(new_app_entry);
 
     if new_app_base_dir.exists() {
         return Err(anyhow!(
