@@ -1,8 +1,8 @@
-use std::io::Read;
+use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use anyhow::anyhow;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct InstalledAppPackEntry {
@@ -11,7 +11,7 @@ pub struct InstalledAppPackEntry {
     pub name: String,
     pub image: String,
     pub description: Option<String>,
-    pub desktop_entries: Option<Vec<String>>,
+    pub desktop_entries: Option<Vec<AppPackDesktopEntry>>,
     pub snapshot_mode: AppPackSnapshotMode,
     pub qemu_command: String,
     pub freerdp_command: String,
@@ -47,7 +47,6 @@ impl From<AppPackIndexFile> for InstalledAppPackEntry {
 }
 
 impl Default for AppPackLocalSettings {
-
     #[cfg(not(debug_assertions))]
     fn default() -> Self {
         let snap_home = std::env::var("SNAP_USER_COMMON").unwrap();
@@ -57,19 +56,28 @@ impl Default for AppPackLocalSettings {
         Self {
             home_dir: snap_home.clone(),
             installed_file: snap_home.join("installed.yaml"),
-            desktop_entries_dir: user_real_home.join(".local").join("share").join("applications"),
+            desktop_entries_dir: user_real_home
+                .join(".local")
+                .join("share")
+                .join("applications"),
         }
     }
 
     #[cfg(debug_assertions)]
     fn default() -> Self {
         let home_str = std::env::var("HOME").unwrap();
-        let snap_home = PathBuf::from(&home_str).join("snap").join("appack").join("common");
+        let snap_home = PathBuf::from(&home_str)
+            .join("snap")
+            .join("appack")
+            .join("common");
         let user_real_home = PathBuf::from(home_str);
         Self {
             home_dir: snap_home.clone(),
             installed_file: snap_home.join("installed.yaml"),
-            desktop_entries_dir: user_real_home.join(".local").join("share").join("applications"),
+            desktop_entries_dir: user_real_home
+                .join(".local")
+                .join("share")
+                .join("applications"),
         }
     }
 }
@@ -77,11 +85,17 @@ impl Default for AppPackLocalSettings {
 impl AppPackLocalSettings {
     pub fn check_ok(&self) -> anyhow::Result<()> {
         if !self.home_dir.exists() {
-            return Err(anyhow!("Home directory does not exist: {}", self.home_dir.display()));
+            return Err(anyhow!(
+                "Home directory does not exist: {}",
+                self.home_dir.display()
+            ));
         }
 
         if !self.desktop_entries_dir.exists() {
-            return Err(anyhow!("Desktop entries directory does not exist: {}", self.desktop_entries_dir.display()));
+            return Err(anyhow!(
+                "Desktop entries directory does not exist: {}",
+                self.desktop_entries_dir.display()
+            ));
         }
 
         Ok(())
@@ -93,17 +107,17 @@ impl AppPackLocalSettings {
         let installed_app_packs: InstalledAppPacks = if installed_filepath.exists() {
             let content = std::fs::read_to_string(&installed_filepath).map_err(|e| {
                 anyhow!(
-                "Failed to read installed file {}: {}",
-                installed_filepath.display(),
-                e
-            )
+                    "Failed to read installed file {}: {}",
+                    installed_filepath.display(),
+                    e
+                )
             })?;
             serde_yaml::from_str(&content).map_err(|e| {
                 anyhow!(
-                "Failed to parse installed file {}: {}",
-                installed_filepath.display(),
-                e
-            )
+                    "Failed to parse installed file {}: {}",
+                    installed_filepath.display(),
+                    e
+                )
             })?
         } else {
             InstalledAppPacks {
@@ -114,19 +128,16 @@ impl AppPackLocalSettings {
         Ok(installed_app_packs)
     }
 
-    pub fn save_installed(
-        &self,
-        installed_app_packs: InstalledAppPacks,
-    ) -> anyhow::Result<()> {
+    pub fn save_installed(&self, installed_app_packs: InstalledAppPacks) -> anyhow::Result<()> {
         let installed_filepath = self.installed_file.clone();
         let content = serde_yaml::to_string(&installed_app_packs)
             .map_err(|e| anyhow!("Failed to serialize installed app packs: {}", e))?;
         std::fs::write(&installed_filepath, content).map_err(|e| {
             anyhow!(
-            "Failed to write installed file {}: {}",
-            installed_filepath.display(),
-            e
-        )
+                "Failed to write installed file {}: {}",
+                installed_filepath.display(),
+                e
+            )
         })?;
 
         Ok(())
@@ -151,7 +162,14 @@ pub struct AppPackIndexFile {
     pub install_append: String,
     pub configure_append: String,
     pub freerdp_command: String,
-    pub desktop_entries: Option<Vec<String>>,
+    pub desktop_entries: Option<Vec<AppPackDesktopEntry>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppPackDesktopEntry {
+    pub entry: String,
+    pub icon: String,
+    pub rdp_args: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -208,8 +226,9 @@ impl AppPackIndexFile {
         file.read_to_end(&mut buffer)
             .map_err(|e| anyhow!("Unable to read config file contents: {}", e))?;
 
-        let cfg: Self = serde_yaml::from_slice(&buffer).map_err(|e| anyhow!("Invalid YAML format in file: {:?}", e))?;
-        let forbidden_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|', ' '];
+        let cfg: Self = serde_yaml::from_slice(&buffer)
+            .map_err(|e| anyhow!("Invalid YAML format in file: {:?}", e))?;
+        let forbidden_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|', ' ', '&', ';'];
 
         if cfg.version.chars().any(|c| forbidden_chars.contains(&c)) {
             return Err(anyhow!("Invalid character in version: {}", cfg.version));

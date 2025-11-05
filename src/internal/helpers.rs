@@ -1,9 +1,9 @@
-use anyhow::{Result, anyhow, Context};
+use anyhow::{Context, Result, anyhow};
 use std::fs::File;
 use std::net::{Ipv4Addr, TcpListener};
 use std::path::Path;
 use zip::ZipWriter;
-use zip::write::{SimpleFileOptions};
+use zip::write::SimpleFileOptions;
 
 pub fn zip_dir(
     zip: &mut ZipWriter<File>,
@@ -50,11 +50,9 @@ fn zip_dir_recursive(
             zip.start_file(path_in_zip_str, *zip_options)
                 .context("Failed to start file in zip")?;
 
-            let mut f =
-                File::open(&path).context(format!("Failed to open file {path:?}"))?;
+            let mut f = File::open(&path).context(format!("Failed to open file {path:?}"))?;
 
-            std::io::copy(&mut f, zip)
-                .context(format!("Failed to copy file {path:?} to zip"))?;
+            std::io::copy(&mut f, zip).context(format!("Failed to copy file {path:?} to zip"))?;
         }
     }
 

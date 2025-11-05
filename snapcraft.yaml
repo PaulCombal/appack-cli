@@ -14,7 +14,6 @@ apps:
     # TODO: cleanup useless plugs
     plugs:
       - desktop # probably not needed? Check if personal-files is enough
-      - home-all # TO REMOVE if we don't need to launch as root
       - network # ?
       - alsa # Probably needed
       - pulseaudio # Probably needed
@@ -32,7 +31,6 @@ apps:
       - network-bind # ?
       - network-control # Probably NOT needed
       - dot-local-share-applications # to add desktop entries
-      - dot-local-share-icons # to add desktop entries icons
 
 #  qemu:
 #    command: usr/bin/qemu-system-x86_64
@@ -59,10 +57,7 @@ parts:
     build-environment:
       - RUSTUP_TOOLCHAIN: stable
     source: .
-    build-packages:
-      - libvirt-dev
     stage-packages:
-      - libvirt0
       - libcurl3t64-gnutls
       - libpsl5t64
       - libicu74
@@ -78,7 +73,6 @@ parts:
       - freerdp3-wayland
       - libpulse0
       - libavcodec60
-      - libvirt-clients # for virsh (not needed for production, debug tools)
 
   appack-assets:
     plugin: dump
@@ -90,7 +84,6 @@ parts:
     source: https://github.com/sergio-costas/snap-build-tools.git
     source-depth: 1
     plugin: nil
-#    build-snaps: [ gnome-46-2404, core24, gtk-common-themes ]
     build-snaps: [ core24 ]
     override-pull: |
       craftctl default
@@ -99,12 +92,8 @@ parts:
   virgl:
     after: [ snapbuildtools ]
     source: https://gitlab.freedesktop.org/virgl/virglrenderer.git
-#    source-tag: virglrenderer-0.10.4
     source-tag: virglrenderer-1.2.0
     source-depth: 1
-    # ext:updatesnap
-    #   version-format:
-    #     format: 'virglrenderer-%M.%m.%R'
     plugin: meson
     meson-parameters:
       - --prefix=/usr
@@ -119,7 +108,6 @@ parts:
     after: [ virgl ]
     source: https://gitlab.com/qemu-project/qemu.git
     source-tag: v10.1.2
-#      source-tag: v9.2.0
     source-depth: 1
     plugin: autotools
     autotools-configure-parameters:
@@ -142,8 +130,6 @@ parts:
       - PKG_CONFIG_PATH: $CRAFT_STAGE/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/pkgconfig:/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}
       - PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/snap/snapcraft/current/bin/scriptlet-bin:$PATH
       - LD_LIBRARY_PATH: $CRAFT_STAGE/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
-    #        $CRAFT_PROJECT_DIR/snapbuildtools/remove_common.py core24 gtk-common-themes gnome-46-2404
-    #      craftctl set version=$(git describe --tags --abbrev=10) # I'm not adopting qemu version so not needed
     override-build: |
       $CRAFT_PROJECT_DIR/snapbuildtools/remove_common.py core24
       craftctl default
@@ -275,20 +261,7 @@ parts:
       - -lib/systemd/system/multipath-tools-boot.service
 
 plugs:
-  home-all: # Needed to access the current user's home directory as sudo
-    interface: home
-    read: all
   dot-local-share-applications:
     interface: personal-files
     write:
       - $HOME/.local/share/applications
-  dot-local-share-icons:
-    interface: personal-files
-    write:
-      - $HOME/.local/share/icons
-
-#layout:
-#  /var/lib/libvirt/images:
-#    bind: $SNAP_COMMON/libvirt/images
-#  /var/lib/libvirt/qemu/save:
-#    bind: $SNAP_COMMON/libvirt/save

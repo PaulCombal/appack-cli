@@ -1,39 +1,48 @@
+use crate::internal::helpers::get_os_assigned_port;
+use crate::internal::types::{AppPackLocalSettings, InstalledAppPackEntry};
+use anyhow::{Context, Result, anyhow};
+use qapi::{Qmp, qmp};
 use std::io::{ErrorKind, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Child, Command};
-use std::sync::{mpsc, Arc};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
+use std::sync::{Arc, mpsc};
 use std::thread;
 use std::thread::JoinHandle;
 use std::time::Duration;
-use anyhow::{anyhow, Context, Result};
-use clap::builder::Str;
-use qapi::{qmp, Qmp};
-use crate::internal::helpers::get_os_assigned_port;
-use crate::internal::types::{AppPackIndexFile, AppPackLocalSettings, InstalledAppPackEntry};
 
+fn spawn_freerdp(
+    rdp_port: &str,
+    app_installed: &InstalledAppPackEntry,
+    rdp_args: Option<&str>,
+) -> Result<Child> {
+    let base = app_installed.freerdp_command.replace("$RDP_PORT", rdp_port);
 
+    let full_cmd = match rdp_args {
+        Some(args) => format!("xfreerdp3 {} {}", base, args),
+        None => format!("xfreerdp3 {}", base),
+    };
 
-fn spawn_freerdp(rdp_port: &str, app_installed: &InstalledAppPackEntry) -> Result<Child> {
-    let mut freerdp_command = app_installed.freerdp_command.clone();
-    freerdp_command = freerdp_command.replace("$RDP_PORT", &rdp_port);
-    let freerdp_command = format!("xfreerdp3 {}", freerdp_command);
-    println!("Launching freerdp: {}", freerdp_command);
-    let child = Command::new("bash")
+    println!("Launching freerdp: {}", full_cmd);
+
+    Ok(Command::new("bash")
         .arg("-c")
-        .arg(freerdp_command)
+        .arg(full_cmd)
         .spawn()
-        .context("Failed to launch freerdp")?;
-
-    Ok(child)
+        .context("Failed to launch freerdp")?)
 }
 
-fn connect_to_appack_socket_and_launch_rdp(appack_socket_path: &Path, app_installed: &InstalledAppPackEntry) -> Result<()> {
-    println!("Client: Connecting to server socket...");
+fn connect_to_appack_socket_and_launch_rdp(
+    appack_socket_path: &Path,
+    app_installed: &InstalledAppPackEntry,
+    rdp_args: Option<&str>,
+) -> Result<()> {
+    println!("Client: Connecting to AppPack socket: {appack_socket_path:?}");
 
-    let mut stream = UnixStream::connect(appack_socket_path)?;
+    let mut stream =
+        UnixStream::connect(appack_socket_path).context("Failed to connect to AppPack socket")?;
     println!("Client: Connected!");
 
     // Read server startup message (2 bytes = u16)
@@ -43,7 +52,7 @@ fn connect_to_appack_socket_and_launch_rdp(appack_socket_path: &Path, app_instal
 
     println!("Client: Received RDP port value: {}", rdp_port);
 
-    spawn_freerdp(&rdp_port.to_string(), app_installed)?.wait()?;
+    spawn_freerdp(&rdp_port.to_string(), app_installed, rdp_args)?.wait()?;
 
     println!("Client: Done. Disconnecting...");
 
@@ -54,8 +63,10 @@ fn connect_to_appack_socket_and_launch_rdp(appack_socket_path: &Path, app_instal
     Ok(())
 }
 
-
-fn appack_server_logic(socket_path: &Path) -> std::io::Result<(Arc<AtomicUsize>, Sender<()>, JoinHandle<()>)> {
+fn appack_server_logic(
+    socket_path: &Path,
+    rdp_port: u16,
+) -> std::io::Result<(Arc<AtomicUsize>, Sender<()>, JoinHandle<()>)> {
     let client_count = Arc::new(AtomicUsize::new(0));
 
     // create channel in outer scope
@@ -66,7 +77,9 @@ fn appack_server_logic(socket_path: &Path) -> std::io::Result<(Arc<AtomicUsize>,
     let socket_path = socket_path.to_path_buf();
     let client_count_for_thread = client_count.clone();
 
+    println!("Launching AppPack server thread");
     let handle = thread::spawn(move || {
+        println!("AppPack server thread spawned. Binding socket: {socket_path:?}");
         let listener = match UnixListener::bind(&socket_path) {
             Ok(l) => l,
             Err(e) => {
@@ -76,7 +89,9 @@ fn appack_server_logic(socket_path: &Path) -> std::io::Result<(Arc<AtomicUsize>,
         };
 
         // Make accept non-blocking so we can poll for a shutdown signal
-        listener.set_nonblocking(true).expect("set_nonblocking failed");
+        listener
+            .set_nonblocking(true)
+            .expect("set_nonblocking failed");
         println!("Server: Listening for external RDP clients...");
 
         loop {
@@ -95,19 +110,26 @@ fn appack_server_logic(socket_path: &Path) -> std::io::Result<(Arc<AtomicUsize>,
 
                     // spawn handler thread
                     thread::spawn(move || {
-                        // Send initial bytes (ignore errors for brevity)
-                        let _ = stream.write_all(&[1u8, 0u8]);
+                        // Send RDP port on client connection
+                        match stream.write_all(rdp_port.to_le_bytes().as_slice()) {
+                            Ok(_) => (),
+                            Err(e) => {
+                                eprintln!("Server: Error writing to RDP socket: {}", e);
+                                return;
+                            }
+                        }
 
                         let mut buf = [0u8; 1];
                         match stream.read_exact(&mut buf) {
                             Ok(_) => {
                                 // shouldn't happen; client shouldn't send
                             }
-                            Err(ref e) if e.kind() == ErrorKind::UnexpectedEof
-                                || e.kind() == ErrorKind::ConnectionReset =>
-                                {
-                                    // client disconnected gracefully
-                                }
+                            Err(ref e)
+                                if e.kind() == ErrorKind::UnexpectedEof
+                                    || e.kind() == ErrorKind::ConnectionReset =>
+                            {
+                                // client disconnected gracefully
+                            }
                             Err(e) => {
                                 eprintln!("Server Handler: Error reading from socket: {}", e);
                             }
@@ -151,75 +173,47 @@ fn appack_server_logic(socket_path: &Path) -> std::io::Result<(Arc<AtomicUsize>,
     Ok((client_count, shutdown_tx, handle))
 }
 
+fn get_app_installed(
+    settings: &AppPackLocalSettings,
+    id: &str,
+    version: Option<&str>,
+) -> Result<InstalledAppPackEntry> {
+    let all_installed = settings
+        .get_installed()
+        .context("Failed to get installed app packs")?;
 
-// fn appack_server_logic(socket_path: &Path) -> Result<Arc<AtomicUsize>> {
-//     let client_count_server = Arc::new(AtomicUsize::new(0));
-//     let client_count_clone = client_count_server.clone();
-//
-//     let socket_path = socket_path.to_path_buf();
-//     std::thread::spawn(move || {
-//         let listener = match std::os::unix::net::UnixListener::bind(socket_path) {
-//             Ok(l) => l,
-//             Err(e) => {
-//                 eprintln!("Server: Error binding socket: {}", e);
-//                 return;
-//             }
-//         };
-//
-//         println!("Server: Listening for external RDP clients...");
-//
-//         for stream_result in listener.incoming() {
-//             match stream_result {
-//                 Ok(mut stream) => {
-//                     // Increment the count immediately upon connection
-//                     client_count_server.fetch_add(1, Ordering::SeqCst);
-//                     println!("Server: New client connected. Count: {}", client_count_server.load(Ordering::SeqCst));
-//
-//                     let client_count_handler = client_count_server.clone();
-//                     stream.write_all(&[1u8, 0u8]); // TODO handle error
-//                     std::thread::spawn(move || {
-//                         let mut buf = [0; 1];
-//                         match stream.read_exact(&mut buf) {
-//                             Ok(_) => {/* Should not happen, client doesn't send data */},
-//                             Err(ref e) if e.kind() == ErrorKind::UnexpectedEof || e.kind() == ErrorKind::ConnectionReset => {
-//                                 // Client disconnected gracefully
-//                             },
-//                             Err(e) => {
-//                                 eprintln!("Server Handler: Error reading from socket: {}", e);
-//                             }
-//                         }
-//
-//                         client_count_handler.fetch_sub(1, Ordering::SeqCst);
-//                         let curr_conns = client_count_handler.load(Ordering::SeqCst);
-//                         println!("Server Handler: Client disconnected. Count: {}", curr_conns);
-//                         if curr_conns == 0 {
-//
-//                         }
-//                     });
-//                 }
-//                 Err(e) => {
-//                     eprintln!("Server: Error accepting connection: {}", e);
-//                     break;
-//                 }
-//             }
-//         }
-//     });
-//
-//     Ok(client_count_clone)
-// }
+    let matches = all_installed.installed.iter().filter(|i| i.id == id);
 
-pub fn launch(settings: &AppPackLocalSettings, id: String, version: Option<String>, rdp_args: Option<String>) -> Result<()> {
-    let all_installed = settings.get_installed().context("Failed to get installed app packs")?;
-    let app_installed = all_installed.installed.into_iter().find(|i| i.id == id);
-    let app_installed = app_installed.context("App pack not installed")?;
+    let filtered: Vec<&InstalledAppPackEntry> = match version {
+        Some(v) => matches.filter(|i| i.version == v).collect(),
+        None => matches.collect(),
+    };
+
+    match filtered.len() {
+        0 => Err(anyhow!("AppPack (or version) is not installed")),
+        1 => Ok(filtered[0].clone()),
+        _ => Err(anyhow!(
+            "Multiple versions installed — please specify a version"
+        )),
+    }
+}
+
+pub fn launch(
+    settings: &AppPackLocalSettings,
+    id: String,
+    version: Option<&str>,
+    rdp_args: Option<&str>,
+) -> Result<()> {
+    let app_installed =
+        get_app_installed(settings, &id, version).context("Failed to get installed AppPack")?;
     let app_installed_home = settings.get_app_home_dir(&app_installed);
     let qmp_socket_path = app_installed_home.join("qmp-appack.sock");
     let appack_socket_path = app_installed_home.join("appack.sock");
 
-    match connect_to_appack_socket_and_launch_rdp(&appack_socket_path, &app_installed) {
+    match connect_to_appack_socket_and_launch_rdp(&appack_socket_path, &app_installed, rdp_args) {
         Ok(_) => {
             return Ok(());
-        },
+        }
         Err(e) => {
             println!("Failed to connect to appack socket, starting server: {}", e);
         }
@@ -230,39 +224,49 @@ pub fn launch(settings: &AppPackLocalSettings, id: String, version: Option<Strin
 
     let mut qemu_command_str = app_installed.qemu_command.clone();
     qemu_command_str = qemu_command_str.replace("$RDP_PORT", &free_port.to_string());
-    qemu_command_str = qemu_command_str.replace("$IMAGE_FILE_PATH", local_image_file_path.to_str().unwrap());
+    qemu_command_str =
+        qemu_command_str.replace("$IMAGE_FILE_PATH", local_image_file_path.to_str().unwrap());
 
     println!("QEMU command -> {}", qemu_command_str);
 
     let mut qemu_command = Command::new("bash");
     qemu_command
+        .current_dir(app_installed_home) // Necessary to make the qmp socket in the dir, although we could find and replace it like other vars it
         .arg("-c")
-        .arg(format!("qemu-system-x86_64 {} -loadvm appack-init", qemu_command_str));
+        .arg(format!(
+            "qemu-system-x86_64 {} -loadvm appack-init",
+            qemu_command_str
+        ));
     let mut qemu_child = qemu_command.spawn()?;
 
-    // Start a named socket and listen on it
-    let (_, _, handle) = appack_server_logic(&appack_socket_path)?;
+    let (_, _, handle) = appack_server_logic(&appack_socket_path, free_port)?;
+    // Just wait a little bit to make sure the server thread started
+    thread::sleep(Duration::from_millis(50));
 
-    match connect_to_appack_socket_and_launch_rdp(&appack_socket_path, &app_installed) {
-        Ok(_) => {},
+    match connect_to_appack_socket_and_launch_rdp(&appack_socket_path, &app_installed, rdp_args) {
+        Ok(_) => {}
         Err(e) => {
             println!("Failed to connect to appack socket as same process {}", e);
         }
     }
 
-    handle.join().map_err(|e| anyhow!("Could not join handle: {e:?}"))?;
+    handle
+        .join()
+        .map_err(|e| anyhow!("Could not join handle: {e:?}"))?;
 
     println!("All RDP sessions finished. Killing QEMU.");
 
     // Send a QMP message to destroy VM
-    let qmp_stream = UnixStream::connect(qmp_socket_path).context("Failed to connect to QMP socket")?;
+    let qmp_stream = UnixStream::connect(&qmp_socket_path).context(format!(
+        "Failed to connect to QMP socket ({qmp_socket_path:?})"
+    ))?;
     let mut qmp = Qmp::from_stream(&qmp_stream);
 
     qmp.handshake().context("Failed to connect to QMP socket")?;
     match qmp.execute(&qmp::quit {}) {
         Ok(_) => {
             qemu_child.wait()?;
-        },
+        }
         Err(e) => {
             println!("Failed to execute quit QMP: {}", e);
             qemu_child.kill().context("Failed to kill Qemu process")?;
@@ -270,6 +274,6 @@ pub fn launch(settings: &AppPackLocalSettings, id: String, version: Option<Strin
     };
 
     println!("Qemu exited");
-    
+
     Ok(())
 }

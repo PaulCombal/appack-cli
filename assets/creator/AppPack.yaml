@@ -9,7 +9,9 @@ readme:
   folder: readme
   index: README.md
 desktop_entries:
-  - desktop/myapp.desktop
+  - entry: desktop/ms-cmd.desktop
+    icon: desktop/ms-ms-cmd.svg
+    rdp_args: /app:program:cmd.exe
 base_command: >-
   -enable-kvm
   -cpu host,migratable=on,hv-time=on,hv-relaxed=on,hv-vapic=on,hv-spinlocks=0x1fff

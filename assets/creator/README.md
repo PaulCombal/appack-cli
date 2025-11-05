@@ -50,6 +50,8 @@ time they start the application.
 Additionally, be aware that once the snapshot is created, users will not be able to adjust the VM's configuration
 (e.g. add a new disk, change the CPU count, etc.).
 
+Run the following command while your VM is still running and ready to open your desired program.
+
 * `appack creator snapshot`
 
 If the snapshot was created successfully, a package will be created following the id and version specified in

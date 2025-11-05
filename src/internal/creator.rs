@@ -1,9 +1,8 @@
 use crate::internal::helpers::{get_os_assigned_port, zip_dir};
-use crate::internal::types::{AppPackIndexFile, InstalledAppPackEntry};
+use crate::internal::types::{AppPackDesktopEntry, AppPackIndexFile, InstalledAppPackEntry};
 use anyhow::{Context, Result, anyhow};
 use qapi::{Qmp, qmp};
-use std::io::{Read, Write};
-use std::net::{Ipv4Addr, TcpListener};
+use std::io::Write;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::process::Command;
@@ -22,27 +21,6 @@ fn create_image(path: &Path) -> Result<()> {
 
     Ok(())
 }
-
-// fn get_xfreerdp3_pids() -> Result<Vec<i32>> {
-//     let output = Command::new("sh")
-//         .arg("-c")
-//         .arg("ps aux | grep xfreerdp3 | grep -v grep | awk '{print $2}'")
-//         .output()
-//         .map_err(|e| anyhow!("Failed to execute command: {}", e))?;
-//
-//     if !output.status.success() {
-//         return Err(anyhow!("Command failed: {:?}", output));
-//     }
-//
-//     let stdout = String::from_utf8_lossy(&output.stdout);
-//
-//     let pids = stdout
-//         .lines()
-//         .filter_map(|s| s.trim().parse::<i32>().ok())
-//         .collect();
-//
-//     Ok(pids)
-// }
 
 fn get_xfreerdp3_pids() -> Result<String> {
     let output = Command::new("sh")
@@ -100,27 +78,11 @@ fn zip_appack(config: &AppPackIndexFile) -> Result<()> {
         std::fs::File::create(zip_name).map_err(|e| anyhow!("Failed to create zip file: {}", e))?;
     let mut zip = ZipWriter::new(zip_file);
 
-    // #[cfg(debug_assertions)]
-    // let zip_options = SimpleFileOptions::default()
-    //     .compression_method(CompressionMethod::Stored)
-    //     .large_file(true)
-    //     .unix_permissions(0o755);
-
-    // #[cfg(not(debug_assertions))]
     let zip_options = SimpleFileOptions::default()
         .large_file(true)
         .compression_method(CompressionMethod::Zstd)
         // .compression_level(Some(9))
         .unix_permissions(0o755);
-
-    // Add image
-    println!("Adding image file to package. This will take a while.");
-    zip.start_file("image.qcow2", zip_options)
-        .map_err(|e| anyhow!("Failed to add file to zip: {}", e))?;
-    let mut f1 =
-        std::fs::File::open(&config.image).map_err(|e| anyhow!("Failed to open file: {}", e))?;
-    std::io::copy(&mut f1, &mut zip).map_err(|e| anyhow!("Failed to copy file to zip: {}", e))?;
-    println!("Added \"image.qcow2\" to package");
 
     // Add readme folder
     zip_dir(&mut zip, &zip_options, Path::new(&config.readme.folder))?;
@@ -133,20 +95,42 @@ fn zip_appack(config: &AppPackIndexFile) -> Result<()> {
         installed_appack_entry.desktop_entries = Some(Vec::new());
 
         for entry in entries {
-            let entry_path = Path::new(entry);
+            let entry_path = Path::new(&entry.entry);
             let entry_file_name = entry_path.file_name().ok_or_else(|| {
                 anyhow!("Could not get file name of desktop entry {entry_path:?}")
             })?;
 
-            let mut f1 =
-                std::fs::File::open(entry).map_err(|e| anyhow!("Failed to open file: {}", e))?;
+            let entry_icon_path = Path::new(&entry.icon);
+            let entry_icon_name = entry_icon_path.file_name().ok_or_else(|| {
+                anyhow!("Could not get icon name of desktop entry {entry_icon_path:?}")
+            })?;
 
+            let mut f1 =
+                std::fs::File::open(&entry.entry).context(format!("Failed to open entry {entry_path:?}"))?;
             let file_in_zip = format!("desktop/{}", entry_file_name.display());
             zip.start_file(&file_in_zip, zip_options)
-                .map_err(|e| anyhow!("Failed to add file to zip: {}", e))?;
+                .context(format!("Failed to start zip entry {file_in_zip}"))?;
             std::io::copy(&mut f1, &mut zip)
-                .map_err(|e| anyhow!("Failed to copy file to zip: {}", e))?;
-            installed_appack_entry.desktop_entries.as_mut().unwrap().push(entry_file_name.to_string_lossy().to_string());
+                .context(format!("Failed to copy to archive {file_in_zip}"))?;
+
+            let mut f1 =
+                std::fs::File::open(&entry.icon).context(format!("Failed to open icon {entry_icon_path:?}"))?;
+            let file_in_zip = format!("desktop/{}", entry_icon_name.display());
+            zip.start_file(&file_in_zip, zip_options).context(format!("Failed to start zip entry {file_in_zip}"))?;
+            std::io::copy(&mut f1, &mut zip)
+                .context(format!("Failed to copy to archive {file_in_zip}"))?;
+
+            let installed_desktop_entry = AppPackDesktopEntry {
+                entry: entry_file_name.to_string_lossy().to_string(),
+                icon: entry_icon_name.to_string_lossy().to_string(),
+                rdp_args: entry.rdp_args.clone(),
+            };
+            
+            installed_appack_entry
+                .desktop_entries
+                .as_mut()
+                .unwrap()
+                .push(installed_desktop_entry);
             println!("Added {entry_file_name:?} to package");
         }
     }
@@ -156,6 +140,14 @@ fn zip_appack(config: &AppPackIndexFile) -> Result<()> {
         .map_err(|e| anyhow!("Failed to start file AppPack: {}", e))?;
     zip.write_all(installed_entry_str.as_bytes())
         .map_err(|e| anyhow!("Failed to write AppPack.yaml to zip: {}", e))?;
+
+    // Add image
+    println!("Adding image file to package. This will take a while.");
+    zip.start_file("image.qcow2", zip_options).context("Failed to start image.qcow2".to_string())?;
+    let mut f1 =
+        std::fs::File::open(&config.image).context(format!("Failed to open image file {}", config.image))?;
+    std::io::copy(&mut f1, &mut zip).context(format!("Failed to copy to archive file {}", config.image))?;
+    println!("Added \"image.qcow2\" to package");
 
     zip.finish()
         .map_err(|e| anyhow!("Failed to finish zip: {}", e))?;
@@ -185,6 +177,10 @@ pub fn creator_new() -> Result<()> {
     std::fs::copy(
         assets_path.join("creator").join("myapp.desktop"),
         "AppPack/desktop/myapp.desktop",
+    )?;
+    std::fs::copy(
+        assets_path.join("creator").join("ms-cmd.svg"),
+        "AppPack/desktop/ms-cmd.svg",
     )?;
 
     create_image(Path::new("AppPack/image.qcow2"))?;
@@ -272,7 +268,10 @@ pub fn creator_snapshot() -> Result<()> {
     }
 
     let block = &blocks[0];
-    let block_inserted = block.inserted.clone().context("BlockInfo does not contain 'inserted' data.")?;
+    let block_inserted = block
+        .inserted
+        .clone()
+        .context("BlockInfo does not contain 'inserted' data.")?;
 
     if block_inserted.image.base.snapshots.is_some() {
         return Err(anyhow!("Block device already has snapshots"));
@@ -333,21 +332,33 @@ pub fn creator_snapshot() -> Result<()> {
     match zip_appack(&config) {
         Ok(_) => println!("AppPack created successfully"),
         Err(e) => {
-            let command = Command::new("qemu-img")
+            let command_result = Command::new("qemu-img")
                 .arg("snapshot")
                 .arg("-d")
                 .arg("appack-init")
                 .arg(config.image)
-                .status()
-                .context("Failed to delete snapshot")?;
+                .status();
 
-            if !command.success() {
-                println!(
-                    "Failed to delete snapshot. Please delete all snapshots manually and try again."
-                );
-            } else {
-                println!("Snapshot deleted. You can safely retry.");
+            match command_result {
+                Ok(status) => {
+                    if status.success() {
+                        println!("Snapshot deleted. You can safely retry.");
+                    } else {
+                        println!(
+                            "Failed to delete snapshot. Please delete all snapshots manually and try again."
+                        );
+                    }
+                }
+                Err(e) => {
+                    println!(
+                        "Failed to delete snapshot. Please delete all snapshots manually and try again: {e:?}"
+                    );
+                }
             }
+
+
+            let zip_name = format!("{}_{}.zip", config.id, config.version);
+            let _ = std::fs::remove_file(zip_name); // Ignore error
 
             return Err(e);
         }
@@ -358,5 +369,13 @@ pub fn creator_snapshot() -> Result<()> {
 
 pub fn creator_test() -> Result<()> {
     let config = AppPackIndexFile::new(Path::new("AppPack.yaml"))?;
-    zip_appack(&config)
+    match zip_appack(&config) {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            let zip_name = format!("{}_{}.zip", config.id, config.version);
+            let _ = std::fs::remove_file(zip_name); // Ignore error
+
+            Err(e)
+        }
+    }
 }

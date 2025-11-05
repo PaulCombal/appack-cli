@@ -1,9 +1,9 @@
 [Desktop Entry]
-Name=My calendar app
-Exec=appack launch myexample-calendar cmd.exe
+Name=MS terminal (cmd)
+Exec=$APPACK_LAUNCH_CMD
 Terminal=false
 Type=Application
-Icon=myexample-calendar
+Icon=$ICON_DIR/ms-cmd.svg
 Comment=Appack example app
 Categories=Utils;
-StartupWMClass=myexample-calendar;
+StartupWMClass=ms-cmd;

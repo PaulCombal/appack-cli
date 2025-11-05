@@ -1,12 +1,15 @@
 use crate::internal::types::AppPackLocalSettings;
 use anyhow::{Result, anyhow};
 use std::fs;
-use std::path::PathBuf;
 
 pub fn uninstall_appack(settings: &AppPackLocalSettings, app_id: &str) -> Result<()> {
     let mut installed = settings.get_installed()?;
 
-    let entry: Vec<_> = installed.installed.iter().filter(|e| e.id == app_id).collect();
+    let entry: Vec<_> = installed
+        .installed
+        .iter()
+        .filter(|e| e.id == app_id)
+        .collect();
 
     if entry.len() == 0 {
         println!("AppPack not installed: {}", app_id);
@@ -25,16 +28,18 @@ pub fn uninstall_appack(settings: &AppPackLocalSettings, app_id: &str) -> Result
     // 1. Remove desktop entries
     if let Some(entries) = &entry.desktop_entries {
         for desktop_entry in entries {
-            let entry_path = settings.desktop_entries_dir.join(format!("{entry_version}_{desktop_entry}"));
+            let entry_path = settings
+                .desktop_entries_dir
+                .join(format!("{entry_version}_{}", desktop_entry.entry));
             if !entry_path.exists() {
                 println!("Desktop entry not found: {}", entry_path.display());
                 continue;
             }
             fs::remove_file(&entry_path)?;
+
+            // We do not need to delete desktop icons as they are in the app dir
         }
     }
-
-    // TODO: remove desktop icons
 
     // 3. Delete AppPack directory
     {

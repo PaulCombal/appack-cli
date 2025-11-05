@@ -1,15 +1,17 @@
 mod internal;
 
-use crate::internal::creator::{creator_boot, creator_boot_install, creator_new, creator_snapshot, creator_test};
+use crate::internal::creator::{
+    creator_boot, creator_boot_install, creator_new, creator_snapshot, creator_test,
+};
 use crate::internal::info::print_info;
-use crate::internal::install_appack::{install_appack};
+use crate::internal::install_appack::install_appack;
+use crate::internal::launch::launch;
+use crate::internal::list_installed::list_installed;
 use crate::internal::types::AppPackLocalSettings;
 use crate::internal::uninstall_appack::uninstall_appack;
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
-use std::path::{Path, PathBuf};
-use crate::internal::launch::launch;
-use crate::internal::list_installed::list_installed;
+use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
 #[clap(author, version, about, long_about = None)]
@@ -39,12 +41,13 @@ enum CliAction {
 
     Launch {
         id: String,
-        version: Option<String>,
         rdp_args: Option<String>,
+        #[clap(long)]
+        version: Option<String>,
     },
 
     Info,
-    Test,// TODO: remove
+    Test, // TODO: remove
 }
 
 #[derive(Debug, Subcommand, ValueEnum, Clone)]
@@ -82,12 +85,16 @@ fn main() -> Result<()> {
         }
         CliAction::Info => {
             print_info(&settings);
-        },
+        }
         CliAction::Test => {
             creator_test()?;
-        },
-        CliAction::Launch {id, version, rdp_args} => {
-            launch(&settings, id, version, rdp_args)?;
+        }
+        CliAction::Launch {
+            id,
+            version,
+            rdp_args,
+        } => {
+            launch(&settings, id, version.as_deref(), rdp_args.as_deref())?;
         }
     }
 
