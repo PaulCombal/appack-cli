@@ -1,7 +1,7 @@
 mod internal;
 
 use crate::internal::creator::{
-    creator_boot, creator_boot_install, creator_new, creator_snapshot, creator_test,
+    creator_boot, creator_boot_install, creator_new, creator_snapshot, creator_pack,
 };
 use crate::internal::info::print_info;
 use crate::internal::install_appack::install_appack;
@@ -47,7 +47,6 @@ enum CliAction {
     },
 
     Info,
-    Test, // TODO: remove
 }
 
 #[derive(Debug, Subcommand, ValueEnum, Clone)]
@@ -56,6 +55,7 @@ enum CliCreatorAction {
     Boot,
     BootInstall,
     Snapshot,
+    Pack
 }
 
 fn main() -> Result<()> {
@@ -79,15 +79,15 @@ fn main() -> Result<()> {
             CliCreatorAction::Snapshot => {
                 creator_snapshot()?;
             }
+            CliCreatorAction::Pack => {
+                creator_pack()?;
+            }
         },
         CliAction::ListInstalled => {
             list_installed(settings)?;
         }
         CliAction::Info => {
             print_info(&settings);
-        }
-        CliAction::Test => {
-            creator_test()?;
         }
         CliAction::Launch {
             id,

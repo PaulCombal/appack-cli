@@ -18,8 +18,8 @@ fn process_desktop_entry(
     settings: &AppPackLocalSettings
 ) -> Result<String> {
     let icon_dir = settings.get_app_home_dir(app).join("desktop");
-    let rdp_args = desktop_entry.rdp_args.replace(" ", "\\s");
-    let rdp_args = rdp_args.replace("\\", "\\\\");
+    let rdp_args = desktop_entry.rdp_args.replace("\\", "\\\\");
+    let rdp_args = rdp_args.replace(" ", "\\s");
 
     let appack_launch_cmd = format!("appack launch {} {} --version={}", app.id, rdp_args, app.version);
 
@@ -93,8 +93,7 @@ fn extract_files(
             .desktop_entries_dir
             .join(format!("{new_app_version}_{}", entry.entry));
         if entry_file_fullpath.exists() {
-            println!("Desktop entry already exists: {}", entry_file_fullpath.display());
-            return Err(anyhow!("Desktop entry already exists"));
+            return Err(anyhow!("Desktop entry already exists: {entry_file_fullpath:?}").context("That app is seems to have been incorrectly uninstalled previously. Please delete the files from the previous installation before proceeding."));
         }
     }
 

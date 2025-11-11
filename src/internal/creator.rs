@@ -1,13 +1,16 @@
-use crate::internal::helpers::{get_os_assigned_port, zip_dir};
-use crate::internal::types::{AppPackDesktopEntry, AppPackIndexFile, InstalledAppPackEntry};
+use crate::internal::helpers::{delete_snapshot_blocking, get_os_assigned_port, take_snapshot_blocking, zip_dir};
+use crate::internal::types::{AppPackDesktopEntry, AppPackIndexFile, AppPackSnapshotMode, InstalledAppPackEntry};
 use anyhow::{Context, Result, anyhow};
 use qapi::{Qmp, qmp};
 use std::io::Write;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::process::Command;
+use std::thread;
+use std::time::Duration;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
+use zip::result::ZipError;
 
 fn create_image(path: &Path) -> Result<()> {
     Command::new("qemu-img")
@@ -116,9 +119,18 @@ fn zip_appack(config: &AppPackIndexFile) -> Result<()> {
             let mut f1 =
                 std::fs::File::open(&entry.icon).context(format!("Failed to open icon {entry_icon_path:?}"))?;
             let file_in_zip = format!("desktop/{}", entry_icon_name.display());
-            zip.start_file(&file_in_zip, zip_options).context(format!("Failed to start zip entry {file_in_zip}"))?;
-            std::io::copy(&mut f1, &mut zip)
-                .context(format!("Failed to copy to archive {file_in_zip}"))?;
+
+            // Same icon may be reused for multiple entries
+            match zip.start_file(&file_in_zip, zip_options) {
+                Ok(_) => {
+                    std::io::copy(&mut f1, &mut zip)
+                        .context(format!("Failed to copy to archive {file_in_zip}"))?;
+                }
+                Err(e) => {
+                    println!("Failed to start icon zip entry {file_in_zip}: {}", e);
+                    println!("This can be intentional, skipping.")
+                },
+            };
 
             let installed_desktop_entry = AppPackDesktopEntry {
                 entry: entry_file_name.to_string_lossy().to_string(),
@@ -205,6 +217,38 @@ pub fn creator_boot() -> Result<()> {
     let mut qemu_command = config.get_boot_configure_command(free_port);
     let mut qemu_child = qemu_command.spawn()?;
 
+    // Wait for qmp socket to be available
+    let qmp_socket_path = Path::new("qmp-appack.sock");
+    loop {
+        match qemu_child.try_wait() {
+            // 1. Ok(None): Child is STILL RUNNING
+            Ok(None) => {
+                match UnixStream::connect(&qmp_socket_path) {
+                    Ok(_) => {
+                        break;
+                    },
+                    Err(e) => {
+                        println!("Waiting for QMP socket connection: {}", e);
+                        thread::sleep(Duration::from_millis(200));
+                    }
+                };
+            }
+
+            // 2. Ok(Some(status)): Child has EXITED
+            Ok(Some(status)) => {
+                eprintln!("QEMU process unexpectedly exited with status: {}", status);
+                return Err(anyhow!("QEMU process died before QMP socket was ready.").context("QEMU failed to start"));
+            }
+
+            // 3. Err(e): An error occurred while trying to check the status
+            Err(e) => {
+                return Err(anyhow!(e).context("Error while checking QEMU status"));
+            }
+        }
+    }
+
+    println!("QMP socket is ready! Continuing.");
+
     let mut rdp_command = config.get_rdp_configure_command(free_port);
 
     match rdp_command.status() {
@@ -236,13 +280,9 @@ pub fn creator_snapshot() -> Result<()> {
         .map_err(|e| anyhow!("Failed to connect to QMP socket: {}", e))?;
     let mut qmp = Qmp::from_stream(&stream);
 
-    let info = qmp
+    qmp
         .handshake()
         .map_err(|e| anyhow!("Failed to handshake with QMP: {}", e))?;
-    println!("QMP info: {:#?}", info);
-
-    // let status = qmp.execute(&qmp::query_status { }).map_err(|e| anyhow!("Failed to get QMP status: {}", e))?;
-    // println!("VCPU status: {:#?}", status);
 
     // 1. Close RDP connections (ctrl+c on xfreerdp?)
     terminate_xfreerdp3()?;
@@ -250,78 +290,18 @@ pub fn creator_snapshot() -> Result<()> {
     // 2. Pause VM
     qmp.execute(&qmp::stop {}).context("Failed to stop VM")?;
 
+    // 2.5 (TODO) Check if the image already have snapshots
+
     // 3. Take a snapshot (internal)
-    // In case we're not using -nodefaults, we have to check for devices where inserted is not null
-    let blocks = qmp
-        .execute(&qmp::query_block {})
-        .map_err(|e| anyhow!("Failed to get block info: {}", e))?;
-    let blocks = blocks
-        .iter()
-        .filter(|b| b.inserted.is_some())
-        .collect::<Vec<_>>();
-
-    if blocks.len() != 1 {
-        return Err(anyhow!(
-            "Expected 1 block device, got {} ({blocks:?})",
-            blocks.len()
-        ));
-    }
-
-    let block = &blocks[0];
-    let block_inserted = block
-        .inserted
-        .clone()
-        .context("BlockInfo does not contain 'inserted' data.")?;
-
-    if block_inserted.image.base.snapshots.is_some() {
-        return Err(anyhow!("Block device already has snapshots"));
-    }
-
-    let block_node_name = block_inserted
-        .node_name
-        .context("BlockDeviceInfo does not contain 'node_name'.")?;
-
-    qmp.execute(&qmp::snapshot_save {
-        tag: "appack-init".to_string(),
-        vmstate: block_node_name.clone(),
-        devices: [block_node_name.clone()].to_vec(),
-        job_id: "appack-init-save".to_string(),
-    })
-    .context("Failed to make snapshot")?;
-
-    // Wait for the snapshot to finish
-    loop {
-        let jobs = qmp
-            .execute(&qmp::query_jobs {})
-            .map_err(|e| anyhow!("Failed to get jobs: {}", e))?;
-        let job = jobs.into_iter().find(|j| j.id == "appack-init-save");
-        if job.is_none() {
-            return Err(anyhow!("Failed to find job with id 'appack-init-save'"));
+    match config.snapshot {
+        AppPackSnapshotMode::OnClose => {
+            take_snapshot_blocking(&mut qmp, "appack-init")?;
+            take_snapshot_blocking(&mut qmp, "appack-onclose")?;
         }
-
-        let job = job.unwrap();
-
-        println!("Job status: {:#?}", job);
-
-        match job.status {
-            qmp::JobStatus::concluded => {
-                if let Some(err) = job.error {
-                    return Err(anyhow!("Failed to take snapshot: {}", err));
-                }
-                println!("Snapshot complete");
-                break;
-            }
-            qmp::JobStatus::created
-            | qmp::JobStatus::running
-            | qmp::JobStatus::waiting
-            | qmp::JobStatus::pending => {
-                std::thread::sleep(std::time::Duration::from_secs(1));
-                println!("Snapshot in progress, waiting...");
-            }
-            _ => {
-                return Err(anyhow!("Snapshot in unknown state: {job:?}"));
-            }
+        AppPackSnapshotMode::Never => {
+            take_snapshot_blocking(&mut qmp, "appack-init")?;
         }
+        AppPackSnapshotMode::NeverLoad => {},
     }
 
     // 4. Destroy the VM. Why do this gracefully?
@@ -332,30 +312,8 @@ pub fn creator_snapshot() -> Result<()> {
     match zip_appack(&config) {
         Ok(_) => println!("AppPack created successfully"),
         Err(e) => {
-            let command_result = Command::new("qemu-img")
-                .arg("snapshot")
-                .arg("-d")
-                .arg("appack-init")
-                .arg(config.image)
-                .status();
-
-            match command_result {
-                Ok(status) => {
-                    if status.success() {
-                        println!("Snapshot deleted. You can safely retry.");
-                    } else {
-                        println!(
-                            "Failed to delete snapshot. Please delete all snapshots manually and try again."
-                        );
-                    }
-                }
-                Err(e) => {
-                    println!(
-                        "Failed to delete snapshot. Please delete all snapshots manually and try again: {e:?}"
-                    );
-                }
-            }
-
+            delete_snapshot_blocking(&mut qmp, "appack-init")?;
+            println!("Snapshot deleted. You can safely retry.");
 
             let zip_name = format!("{}_{}.zip", config.id, config.version);
             let _ = std::fs::remove_file(zip_name); // Ignore error
@@ -367,7 +325,7 @@ pub fn creator_snapshot() -> Result<()> {
     Ok(())
 }
 
-pub fn creator_test() -> Result<()> {
+pub fn creator_pack() -> Result<()> {
     let config = AppPackIndexFile::new(Path::new("AppPack.yaml"))?;
     match zip_appack(&config) {
         Ok(_) => Ok(()),

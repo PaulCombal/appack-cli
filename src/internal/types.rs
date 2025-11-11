@@ -176,6 +176,7 @@ pub struct AppPackDesktopEntry {
 pub enum AppPackSnapshotMode {
     OnClose,
     Never,
+    NeverLoad,
 }
 
 // Should we let the variables be replaced via the environment instead? Probably.
