@@ -1,5 +1,9 @@
-use crate::internal::helpers::{delete_snapshot_blocking, get_os_assigned_port, take_snapshot_blocking, zip_dir};
-use crate::internal::types::{AppPackDesktopEntry, AppPackIndexFile, AppPackSnapshotMode, InstalledAppPackEntry};
+use crate::internal::helpers::{
+    delete_snapshot_blocking, get_os_assigned_port, take_snapshot_blocking, zip_dir,
+};
+use crate::internal::types::{
+    AppPackDesktopEntry, AppPackIndexFile, AppPackSnapshotMode, InstalledAppPackEntry,
+};
 use anyhow::{Context, Result, anyhow};
 use qapi::{Qmp, qmp};
 use std::io::Write;
@@ -10,7 +14,6 @@ use std::thread;
 use std::time::Duration;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
-use zip::result::ZipError;
 
 fn create_image(path: &Path) -> Result<()> {
     Command::new("qemu-img")
@@ -20,7 +23,7 @@ fn create_image(path: &Path) -> Result<()> {
         .arg(path)
         .arg("32G")
         .status()
-        .map_err(|e| anyhow!("Failed to create image: {}", e))?;
+        .context("Failed to create disk image")?;
 
     Ok(())
 }
@@ -30,7 +33,7 @@ fn get_xfreerdp3_pids() -> Result<String> {
         .arg("-c")
         .arg("ps aux | grep xfreerdp3 | grep -v grep | awk '{print $2}'")
         .output()
-        .map_err(|e| anyhow!("Failed to execute command: {}", e))?;
+        .context("Failed to get FreeRDP pids")?;
 
     if !output.status.success() {
         return Err(anyhow!("PID finding command failed"));
@@ -77,8 +80,7 @@ fn terminate_xfreerdp3() -> Result<()> {
 
 fn zip_appack(config: &AppPackIndexFile) -> Result<()> {
     let zip_name = format!("{}_{}.zip", config.id, config.version);
-    let zip_file =
-        std::fs::File::create(zip_name).map_err(|e| anyhow!("Failed to create zip file: {}", e))?;
+    let zip_file = std::fs::File::create(zip_name).context("Failed to create zip file")?;
     let mut zip = ZipWriter::new(zip_file);
 
     let zip_options = SimpleFileOptions::default()
@@ -108,16 +110,16 @@ fn zip_appack(config: &AppPackIndexFile) -> Result<()> {
                 anyhow!("Could not get icon name of desktop entry {entry_icon_path:?}")
             })?;
 
-            let mut f1 =
-                std::fs::File::open(&entry.entry).context(format!("Failed to open entry {entry_path:?}"))?;
+            let mut f1 = std::fs::File::open(&entry.entry)
+                .context(format!("Failed to open entry {entry_path:?}"))?;
             let file_in_zip = format!("desktop/{}", entry_file_name.display());
             zip.start_file(&file_in_zip, zip_options)
                 .context(format!("Failed to start zip entry {file_in_zip}"))?;
             std::io::copy(&mut f1, &mut zip)
                 .context(format!("Failed to copy to archive {file_in_zip}"))?;
 
-            let mut f1 =
-                std::fs::File::open(&entry.icon).context(format!("Failed to open icon {entry_icon_path:?}"))?;
+            let mut f1 = std::fs::File::open(&entry.icon)
+                .context(format!("Failed to open icon {entry_icon_path:?}"))?;
             let file_in_zip = format!("desktop/{}", entry_icon_name.display());
 
             // Same icon may be reused for multiple entries
@@ -129,7 +131,7 @@ fn zip_appack(config: &AppPackIndexFile) -> Result<()> {
                 Err(e) => {
                     println!("Failed to start icon zip entry {file_in_zip}: {}", e);
                     println!("This can be intentional, skipping.")
-                },
+                }
             };
 
             let installed_desktop_entry = AppPackDesktopEntry {
@@ -137,7 +139,7 @@ fn zip_appack(config: &AppPackIndexFile) -> Result<()> {
                 icon: entry_icon_name.to_string_lossy().to_string(),
                 rdp_args: entry.rdp_args.clone(),
             };
-            
+
             installed_appack_entry
                 .desktop_entries
                 .as_mut()
@@ -149,34 +151,31 @@ fn zip_appack(config: &AppPackIndexFile) -> Result<()> {
 
     let installed_entry_str = serde_yaml::to_string(&installed_appack_entry)?;
     zip.start_file("AppPack.yaml", zip_options)
-        .map_err(|e| anyhow!("Failed to start file AppPack: {}", e))?;
+        .context("Failed to start file AppPack")?;
     zip.write_all(installed_entry_str.as_bytes())
-        .map_err(|e| anyhow!("Failed to write AppPack.yaml to zip: {}", e))?;
+        .context("Failed to write AppPack.yaml to zip")?;
 
     // Add image
     println!("Adding image file to package. This will take a while.");
-    zip.start_file("image.qcow2", zip_options).context("Failed to start image.qcow2".to_string())?;
-    let mut f1 =
-        std::fs::File::open(&config.image).context(format!("Failed to open image file {}", config.image))?;
-    std::io::copy(&mut f1, &mut zip).context(format!("Failed to copy to archive file {}", config.image))?;
+    zip.start_file("image.qcow2", zip_options)
+        .context("Failed to start image.qcow2".to_string())?;
+    let mut f1 = std::fs::File::open(&config.image)
+        .context(format!("Failed to open image file {}", config.image))?;
+    std::io::copy(&mut f1, &mut zip)
+        .context(format!("Failed to copy to archive file {}", config.image))?;
     println!("Added \"image.qcow2\" to package");
 
-    zip.finish()
-        .map_err(|e| anyhow!("Failed to finish zip: {}", e))?;
+    zip.finish().context("Failed to finish zip")?;
 
     Ok(())
 }
 
 pub fn creator_new() -> Result<()> {
-    let assets_path_str =
-        std::env::var("SNAP").map_err(|e| anyhow!("Failed to get assets path: {}", e))?;
+    let assets_path_str = std::env::var("SNAP").context("Failed to get assets path")?;
     let assets_path = Path::new(&assets_path_str).join("assets");
-    std::fs::create_dir("AppPack")
-        .map_err(|e| anyhow!("Failed to create AppPack directory: {}", e))?;
-    std::fs::create_dir("AppPack/readme")
-        .map_err(|e| anyhow!("Failed to create readme directory: {}", e))?;
-    std::fs::create_dir("AppPack/desktop")
-        .map_err(|e| anyhow!("Failed to create desktop directory: {}", e))?;
+    std::fs::create_dir("AppPack").context("Failed to create AppPack directory")?;
+    std::fs::create_dir("AppPack/readme").context("Failed to create readme directory")?;
+    std::fs::create_dir("AppPack/desktop").context("Failed to create desktop directory")?;
 
     std::fs::copy(
         assets_path.join("creator").join("README.md"),
@@ -187,8 +186,12 @@ pub fn creator_new() -> Result<()> {
         "AppPack/AppPack.yaml",
     )?;
     std::fs::copy(
-        assets_path.join("creator").join("myapp.desktop"),
-        "AppPack/desktop/myapp.desktop",
+        assets_path.join("creator").join("ms-cmd.desktop"),
+        "AppPack/desktop/ms-cmd.desktop",
+    )?;
+    std::fs::copy(
+        assets_path.join("creator").join("plain-rdp.desktop"),
+        "AppPack/desktop/plain-rdp.desktop",
     )?;
     std::fs::copy(
         assets_path.join("creator").join("ms-cmd.svg"),
@@ -226,7 +229,7 @@ pub fn creator_boot() -> Result<()> {
                 match UnixStream::connect(&qmp_socket_path) {
                     Ok(_) => {
                         break;
-                    },
+                    }
                     Err(e) => {
                         println!("Waiting for QMP socket connection: {}", e);
                         thread::sleep(Duration::from_millis(200));
@@ -237,7 +240,8 @@ pub fn creator_boot() -> Result<()> {
             // 2. Ok(Some(status)): Child has EXITED
             Ok(Some(status)) => {
                 eprintln!("QEMU process unexpectedly exited with status: {}", status);
-                return Err(anyhow!("QEMU process died before QMP socket was ready.").context("QEMU failed to start"));
+                return Err(anyhow!("QEMU process died before QMP socket was ready.")
+                    .context("QEMU failed to start"));
             }
 
             // 3. Err(e): An error occurred while trying to check the status
@@ -276,13 +280,10 @@ pub fn creator_snapshot() -> Result<()> {
     // We read the config first to validate its contents before proceeding with the snapshot
     let config = AppPackIndexFile::new(Path::new("AppPack.yaml"))?;
     let socket_addr = "./qmp-appack.sock";
-    let stream = UnixStream::connect(socket_addr)
-        .map_err(|e| anyhow!("Failed to connect to QMP socket: {}", e))?;
+    let stream = UnixStream::connect(socket_addr).context("Failed to connect to QMP socket")?;
     let mut qmp = Qmp::from_stream(&stream);
 
-    qmp
-        .handshake()
-        .map_err(|e| anyhow!("Failed to handshake with QMP: {}", e))?;
+    qmp.handshake().context("Failed to handshake with QMP")?;
 
     // 1. Close RDP connections (ctrl+c on xfreerdp?)
     terminate_xfreerdp3()?;
@@ -301,12 +302,11 @@ pub fn creator_snapshot() -> Result<()> {
         AppPackSnapshotMode::Never => {
             take_snapshot_blocking(&mut qmp, "appack-init")?;
         }
-        AppPackSnapshotMode::NeverLoad => {},
+        AppPackSnapshotMode::NeverLoad => {}
     }
 
     // 4. Destroy the VM. Why do this gracefully?
-    qmp.execute(&qmp::quit {})
-        .map_err(|e| anyhow!("Failed to quit QMP: {}", e))?;
+    qmp.execute(&qmp::quit {}).context("Failed to quit QMP")?;
 
     // 5. Zip files
     match zip_appack(&config) {

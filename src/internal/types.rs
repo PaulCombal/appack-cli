@@ -1,4 +1,4 @@
-use anyhow::anyhow;
+use anyhow::{Context, anyhow};
 use serde::{Deserialize, Serialize};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -105,20 +105,14 @@ impl AppPackLocalSettings {
         let installed_filepath = self.installed_file.clone();
 
         let installed_app_packs: InstalledAppPacks = if installed_filepath.exists() {
-            let content = std::fs::read_to_string(&installed_filepath).map_err(|e| {
-                anyhow!(
-                    "Failed to read installed file {}: {}",
-                    installed_filepath.display(),
-                    e
-                )
-            })?;
-            serde_yaml::from_str(&content).map_err(|e| {
-                anyhow!(
-                    "Failed to parse installed file {}: {}",
-                    installed_filepath.display(),
-                    e
-                )
-            })?
+            let content = std::fs::read_to_string(&installed_filepath).context(format!(
+                "Failed to read installed file {}",
+                installed_filepath.display()
+            ))?;
+            serde_yaml::from_str(&content).context(format!(
+                "Failed to parse installed file {}",
+                installed_filepath.display()
+            ))?
         } else {
             InstalledAppPacks {
                 installed: Vec::new(),
@@ -131,14 +125,11 @@ impl AppPackLocalSettings {
     pub fn save_installed(&self, installed_app_packs: InstalledAppPacks) -> anyhow::Result<()> {
         let installed_filepath = self.installed_file.clone();
         let content = serde_yaml::to_string(&installed_app_packs)
-            .map_err(|e| anyhow!("Failed to serialize installed app packs: {}", e))?;
-        std::fs::write(&installed_filepath, content).map_err(|e| {
-            anyhow!(
-                "Failed to write installed file {}: {}",
-                installed_filepath.display(),
-                e
-            )
-        })?;
+            .context("Failed to serialize installed app packs")?;
+        std::fs::write(&installed_filepath, content).context(format!(
+            "Failed to write installed file {}",
+            installed_filepath.display()
+        ))?;
 
         Ok(())
     }
@@ -153,7 +144,6 @@ pub struct AppPackIndexFile {
     pub name: String,
     pub id: String,
     pub version: String,
-    pub state: Option<String>,
     pub image: String,
     pub description: Option<String>,
     pub snapshot: AppPackSnapshotMode,
@@ -187,10 +177,9 @@ impl AppPackIndexFile {
 
         println!("Full boot install {}", full_command);
 
-        let mut command = Command::new("bash");
-        command
-            .arg("-c")
-            .arg(format!("qemu-system-x86_64 {}", full_command));
+        let full_command_args = full_command.split_whitespace().collect::<Vec<&str>>();
+        let mut command = Command::new("qemu-system-x86_64");
+        command.args(full_command_args);
         command
     }
 
@@ -201,34 +190,35 @@ impl AppPackIndexFile {
 
         println!("Full boot configure {}", full_command);
 
-        let mut command = Command::new("bash");
-        command
-            .arg("-c")
-            .arg(format!("qemu-system-x86_64 {}", full_command));
+        let full_command_args = full_command.split_whitespace().collect::<Vec<&str>>();
+        let mut command = Command::new("qemu-system-x86_64");
+        command.args(full_command_args);
         command
     }
 
     pub fn get_rdp_configure_command(&self, rdp_port: u16) -> Command {
+        let snap_real_home = std::env::var("SNAP_REAL_HOME").unwrap();
         let full_command = self.freerdp_command.clone();
         let full_command = full_command.replace("$RDP_PORT", &rdp_port.to_string());
+        let full_command = full_command.replace("$HOME", &snap_real_home);
 
         println!("Full RDP configure {}", full_command);
 
-        let mut command = Command::new("bash");
-        command.arg("-c").arg(format!("xfreerdp3 {}", full_command));
+        let full_command_args = full_command.split_whitespace().collect::<Vec<&str>>();
+        let mut command = Command::new("xfreerdp3");
+        command.args(full_command_args);
         command
     }
 
     pub fn new(path: &Path) -> anyhow::Result<Self> {
         let mut file = std::fs::File::open(path)
-            .map_err(|e| anyhow!("Unable to open config file at {}: {}", path.display(), e))?;
+            .context(format!("Unable to open config file at {}", path.display()))?;
 
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer)
-            .map_err(|e| anyhow!("Unable to read config file contents: {}", e))?;
+            .context("Unable to read config file contents")?;
 
-        let cfg: Self = serde_yaml::from_slice(&buffer)
-            .map_err(|e| anyhow!("Invalid YAML format in file: {:?}", e))?;
+        let cfg: Self = serde_yaml::from_slice(&buffer).context("Invalid YAML format in file")?;
         let forbidden_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|', ' ', '&', ';'];
 
         if cfg.version.chars().any(|c| forbidden_chars.contains(&c)) {
@@ -243,6 +233,7 @@ impl AppPackIndexFile {
 pub struct ReadmeConfiguration {
     #[serde(default = "default_readme_folder")]
     pub folder: String,
+    #[allow(dead_code)]
     #[serde(default = "default_readme_index")]
     pub index: String,
 }

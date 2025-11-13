@@ -1,14 +1,17 @@
 mod internal;
+mod logger;
 
 use crate::internal::creator::{
-    creator_boot, creator_boot_install, creator_new, creator_snapshot, creator_pack,
+    creator_boot, creator_boot_install, creator_new, creator_pack, creator_snapshot,
 };
 use crate::internal::info::print_info;
 use crate::internal::install_appack::install_appack;
 use crate::internal::launch::launch;
 use crate::internal::list_installed::list_installed;
+use crate::internal::reset::reset;
 use crate::internal::types::AppPackLocalSettings;
 use crate::internal::uninstall_appack::uninstall_appack;
+use crate::logger::logger::log_debug;
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
@@ -46,6 +49,12 @@ enum CliAction {
         version: Option<String>,
     },
 
+    Reset {
+        id: String,
+        #[clap(long)]
+        version: Option<String>,
+    },
+
     Info,
 }
 
@@ -55,11 +64,20 @@ enum CliCreatorAction {
     Boot,
     BootInstall,
     Snapshot,
-    Pack
+    Pack,
 }
 
 fn main() -> Result<()> {
-    let args = Cli::parse();
+    log_debug("AppPack starting");
+
+    let args = match Cli::try_parse() {
+        Ok(args) => args,
+        Err(e) => {
+            log_debug("Error parsing args:");
+            log_debug(&e);
+            return Err(anyhow::anyhow!(e));
+        }
+    };
 
     let settings = AppPackLocalSettings::default();
 
@@ -93,10 +111,20 @@ fn main() -> Result<()> {
             id,
             version,
             rdp_args,
-        } => {
-            launch(&settings, id, version.as_deref(), rdp_args.as_deref())?;
+        } => match launch(&settings, id, version.as_deref(), rdp_args.as_deref()) {
+            Ok(_) => {}
+            Err(e) => {
+                log_debug("Error launching app pack:");
+                log_debug(&e);
+                return Err(anyhow::anyhow!(e));
+            }
+        },
+        CliAction::Reset { id, version } => {
+            reset(&settings, id, version.as_deref())?;
         }
     }
+
+    log_debug("AppPack stopped");
 
     Ok(())
 }

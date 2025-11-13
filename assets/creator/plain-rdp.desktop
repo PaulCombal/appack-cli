@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Full RDP session
+Exec=$APPACK_LAUNCH_CMD
+Terminal=false
+Type=Application
+Icon=$ICON_DIR/ms-cmd.svg
+Comment=AppPack full RDP session used for debugging
+Categories=Utils;
+StartupWMClass=ms-cmd;

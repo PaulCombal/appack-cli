@@ -52,34 +52,6 @@ apps:
 #      - network-control
 
 parts:
-  appack:
-    plugin: rust
-    build-environment:
-      - RUSTUP_TOOLCHAIN: stable
-    source: .
-    stage-packages:
-      - libcurl3t64-gnutls
-      - libpsl5t64
-      - libicu74
-      - libldap2
-      - libnghttp2-14
-      - libnuma1
-      - librtmp1
-      - libsasl2-2
-      - libssh-4
-      - libxml2
-      - libyajl2
-      - freerdp3-x11
-      - freerdp3-wayland
-      - libpulse0
-      - libavcodec60
-
-  appack-assets:
-    plugin: dump
-    source: .
-    stage:
-      - assets
-
   snapbuildtools:
     source: https://github.com/sergio-costas/snap-build-tools.git
     source-depth: 1
@@ -115,7 +87,6 @@ parts:
       - --target-list=x86_64-softmmu # Add more architectures here if needed, cf qemu-virgil-snap
       - --audio-drv-list=pa,sdl
       - --enable-libusb
-      - --enable-usb-redir
       - --enable-sdl
       - --enable-spice
       - --enable-kvm
@@ -259,6 +230,50 @@ parts:
       # Remove cruft
       - -usr/share/qemu/qemu-nsis.bmp
       - -lib/systemd/system/multipath-tools-boot.service
+
+  appack:
+    plugin: rust
+    build-environment:
+      - RUSTUP_TOOLCHAIN: stable
+    source: .
+    stage-packages:
+      - libcurl3t64-gnutls
+      - libpsl5t64
+      - libicu74
+      - libldap2
+      - libnghttp2-14
+      - libnuma1
+      - librtmp1
+      - libsasl2-2
+      - libssh-4
+      - libxml2
+      - libyajl2
+      - freerdp3-x11
+      - freerdp3-wayland
+      - libpulse0
+      - libavcodec60
+    stage:
+      # This will probably cause a nasty bug one day
+      - -usr/lib/x86_64-linux-gnu/libdrm_intel.so.1.0.0
+
+  appack-assets:
+    plugin: dump
+    source: .
+    stage:
+      - assets
+
+  cleanup:
+    after: [ qemu ]
+    plugin: nil
+    override-prime: |
+      set -eux
+      for CRUFT in bug lintian man; do
+        rm -rf $CRAFT_PRIME/usr/share/$CRUFT
+      done
+      find $CRAFT_PRIME/usr/share/doc/ -type f -not -name 'copyright' -delete
+      find $CRAFT_PRIME/usr/share -type d -empty -delete
+      rm -f $CRAFT_PRIME/usr/share/qemu/openbios-sparc32
+      rm -f $CRAFT_PRIME/usr/share/qemu/openbios-sparc64
 
 plugs:
   dot-local-share-applications:

@@ -137,11 +137,3 @@
 #      # XXX: This is an hack to have a kind of bind-mount with absolute prefix.
 ##      - -DCMAKE_INSTALL_PREFIX=/snap/$CRAFT_PROJECT_NAME/current/usr
 #      - -DCMAKE_INSTALL_PREFIX=/usr
-
-# TEST
-#plugs:
-#  libvirt-qemu-save:
-#    interface: system-files
-#    write:
-#      - /var/lib/libvirt/qemu/save
-#      - /var/lib/libvirt/images

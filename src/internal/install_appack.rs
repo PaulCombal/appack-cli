@@ -1,34 +1,52 @@
-use crate::internal::types::{AppPackDesktopEntry, AppPackLocalSettings, InstalledAppPackEntry, InstalledAppPacks};
+use crate::internal::types::{
+    AppPackDesktopEntry, AppPackLocalSettings, InstalledAppPackEntry, InstalledAppPacks,
+};
 use anyhow::{Context, Result, anyhow};
 use std::collections::HashSet;
-use std::fmt::format;
 use std::fs::File;
 use std::io;
 use std::io::{Read, Write};
 use std::path::PathBuf;
+use std::time::Duration;
 use zip::ZipArchive;
 
-
-/// Weirdly enough this doesn't need escaping. Since we're not running a shell command.
+/// Weirdly enough this doesn't need escaping. To confirm, I escape anyway.
 /// https://specifications.freedesktop.org/desktop-entry-spec/1.1/value-types.html
 fn process_desktop_entry(
     file_entry_contents: &str,
     desktop_entry: &AppPackDesktopEntry,
     app: &InstalledAppPackEntry,
-    settings: &AppPackLocalSettings
+    settings: &AppPackLocalSettings,
 ) -> Result<String> {
     let icon_dir = settings.get_app_home_dir(app).join("desktop");
-    let rdp_args = desktop_entry.rdp_args.replace("\\", "\\\\");
-    let rdp_args = rdp_args.replace(" ", "\\s");
 
-    let appack_launch_cmd = format!("appack launch {} {} --version={}", app.id, rdp_args, app.version);
+    let appack_launch_cmd = if desktop_entry.rdp_args.is_empty() {
+        format!(
+            "appack launch {} --version={}",
+            app.id, app.version
+        )
+    } else {
+        let escaped_rdp_args = desktop_entry.rdp_args
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"");
 
-    let final_contents = file_entry_contents.replace("$APPACK_LAUNCH_CMD", &appack_launch_cmd);
-    let final_contents = final_contents.replace("$ICON_DIR", icon_dir.to_str().unwrap());
+        format!(
+            "appack launch {} \"{}\" --version={}",
+            app.id, escaped_rdp_args, app.version
+        )
+    };
+
+    let final_contents = file_entry_contents
+        .replace("$APPACK_LAUNCH_CMD", &appack_launch_cmd)
+        .replace("$ICON_DIR", icon_dir.to_str().unwrap())
+        .replace("$ICON_FULL_PATH", icon_dir.join(&desktop_entry.icon).to_str().unwrap());
+
+    println!("Installed desktop entry with supposed exec line: `{appack_launch_cmd}`");
 
     let final_exec_lines: Vec<_> = final_contents
         .lines()
-        .filter(|line| line.starts_with("Exec")).collect();
+        .filter(|line| line.starts_with("Exec"))
+        .collect();
 
     if final_exec_lines.len() != 1 {
         return Err(anyhow!("Incorrect amount of Exec entries"));
@@ -40,17 +58,60 @@ fn process_desktop_entry(
         return Err(anyhow!("Malformed exec entry: {}", final_exec_lines));
     }
 
-    let exec_line = final_exec_line_split.nth(1).context("Sanitization error, this should never happen")?.to_string();
+    let exec_line = final_exec_line_split
+        .nth(1)
+        .context("Sanitization error, this should never happen")?
+        .to_string();
 
     if appack_launch_cmd != exec_line {
-        println!("====== DANGER =======");
-        println!("A desktop entry was added for this app. It will run the following command on activation:");
+        println!("=============================================");
+        println!("  ⚠️ SECURITY ALERT: DESKTOP ENTRY REVIEW ⚠️  ");
+        println!("=============================================");
+
+        println!(
+            "A desktop entry has been configured for this application. \
+            Please **CRITICALLY REVIEW** the command that will be executed upon activation \
+            against the expected safe command."
+        );
         println!();
-        println!("{exec_line}");
+
+        println!("--- COMMAND COMPARISON ---");
+        println!("  1. EXPECTED SAFE COMMAND:");
+        println!("     > {appack_launch_cmd}");
         println!();
-        println!("Your typical command should look like this: '{appack_launch_cmd}'");
+
+        println!("  2. CONFIGURED EXECUTION COMMAND:");
+        println!("     > {exec_line}");
         println!();
-        println!("If you think this could be malicious, uninstall this appack immediately.");
+
+        println!("--- IMMEDIATE ACTION REQUIRED ---");
+        println!(
+            "If **Command 2 (Configured)** does **NOT** exactly match **Command 1 (Expected)**, \
+            this indicates a potential security risk where a malicious program may execute instead. \
+            In this case, you must **IMMEDIATELY UNINSTALL** this application upon installation completion."
+        );
+        println!("=============================================");
+        print!("Installation will resume in 5 seconds");
+        io::stdout().flush()?;
+
+        std::thread::sleep(Duration::from_secs(1));
+        print!(".");
+        io::stdout().flush()?;
+
+        std::thread::sleep(Duration::from_secs(1));
+        print!(".");
+        io::stdout().flush()?;
+
+        std::thread::sleep(Duration::from_secs(1));
+        print!(".");
+        io::stdout().flush()?;
+
+        std::thread::sleep(Duration::from_secs(1));
+        print!(".");
+        io::stdout().flush()?;
+
+        std::thread::sleep(Duration::from_secs(1));
+        println!(".");
     }
 
     Ok(final_contents)
@@ -59,12 +120,12 @@ fn process_desktop_entry(
 fn extract_config(archive: &mut ZipArchive<File>) -> Result<InstalledAppPackEntry> {
     let mut file = archive
         .by_name("AppPack.yaml")
-        .map_err(|_| anyhow!("File 'AppPack.yaml' not found in archive"))?;
+        .context("File 'AppPack.yaml' not found in archive")?;
 
     let mut buffer = Vec::with_capacity(file.size() as usize);
     file.read_to_end(&mut buffer)
-        .map_err(|e| anyhow!("Unable to read config file: {e}"))?;
-    serde_yaml::from_slice(&buffer).map_err(|e| anyhow!("Invalid YAML file: {e:?}"))
+        .context("Unable to read config file")?;
+    serde_yaml::from_slice(&buffer).context("Invalid YAML file")
 }
 
 fn extract_files(
@@ -87,7 +148,10 @@ fn extract_files(
     for entry in desktop_entries.iter() {
         archive
             .by_name(&format!("desktop/{}", entry.entry))
-            .map_err(|_| anyhow!("Desktop entry '{}' not found in archive", entry.entry))?;
+            .context(format!(
+                "Desktop entry '{}' not found in archive",
+                entry.entry
+            ))?;
 
         let entry_file_fullpath = local_settings
             .desktop_entries_dir
@@ -104,11 +168,13 @@ fn extract_files(
     {
         let mut image_file = archive
             .by_name(image_filename)
-            .map_err(|_| anyhow!("Image '{}' not found in archive", image_filename))?;
+            .context(format!("Image '{}' not found in archive", image_filename))?;
         let image_fullpath = new_app_base_dir.join(image_filename);
 
-        let mut outfile = File::create(&image_fullpath)
-            .map_err(|e| anyhow!("Unable to create file {}: {e}", image_fullpath.display()))?;
+        let mut outfile = File::create(&image_fullpath).context(format!(
+            "Unable to create file {}",
+            image_fullpath.display()
+        ))?;
         io::copy(&mut image_file, &mut outfile)?;
     }
 
@@ -118,7 +184,10 @@ fn extract_files(
         {
             let mut entry_file = archive
                 .by_name(&format!("desktop/{}", entry.entry))
-                .map_err(|_| anyhow!("Desktop entry '{}' not found in archive", entry.entry))?;
+                .context(format!(
+                    "Desktop entry '{}' not found in archive",
+                    entry.entry
+                ))?;
 
             let entry_fullpath = local_settings
                 .desktop_entries_dir
@@ -127,9 +196,13 @@ fn extract_files(
                 File::create(&entry_fullpath).context("Unable to create desktop entry file")?;
 
             let mut file_content = String::new();
-            entry_file.read_to_string(&mut file_content).context("Unable to read entry file")?;
+            entry_file
+                .read_to_string(&mut file_content)
+                .context("Unable to read entry file")?;
 
-            let file_content = process_desktop_entry(&file_content, entry, &new_app_entry, &local_settings).context("Unable to parse desktop entry")?;
+            let file_content =
+                process_desktop_entry(&file_content, entry, &new_app_entry, &local_settings)
+                    .context("Unable to parse desktop entry")?;
 
             outfile.write_all(file_content.as_bytes())?;
         }
@@ -137,14 +210,17 @@ fn extract_files(
         {
             let mut entry_file = archive
                 .by_name(&format!("desktop/{}", entry.icon))
-                .map_err(|_| anyhow!("Desktop entry '{}' not found in archive", entry.icon))?;
+                .context(format!(
+                    "Desktop entry '{}' not found in archive",
+                    entry.icon
+                ))?;
             let entry_fullpath = new_app_base_dir.join("desktop").join(&entry.icon);
-            let mut outfile = File::create(&entry_fullpath).context("Unable to create desktop entry icon")?;
+            let mut outfile =
+                File::create(&entry_fullpath).context("Unable to create desktop entry icon")?;
 
             io::copy(&mut entry_file, &mut outfile)?;
         }
     }
-
 
     Ok(())
 }
@@ -211,10 +287,8 @@ fn check_valid_app_pack(
 
 // Todo: make this atomic as in if it fails then the halfway done files should be removed
 pub fn install_appack(file_path: PathBuf, settings: AppPackLocalSettings) -> Result<()> {
-    let file =
-        File::open(&file_path).map_err(|e| anyhow!("Unable to open file {file_path:?}: {e}"))?;
-    let mut archive =
-        ZipArchive::new(file).map_err(|e| anyhow!("Unable to file as zip archive: {e}"))?;
+    let file = File::open(&file_path).context(format!("Unable to open file {file_path:?}"))?;
+    let mut archive = ZipArchive::new(file).context("Unable to file as zip archive")?;
 
     settings.check_ok()?;
     let new_app_entry = extract_config(&mut archive)?;

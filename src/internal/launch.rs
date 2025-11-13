@@ -1,5 +1,9 @@
-use crate::internal::helpers::{delete_snapshot_blocking, get_os_assigned_port, has_snapshot, take_snapshot_blocking};
+use crate::internal::helpers::{
+    delete_snapshot_blocking, get_app_installed, get_os_assigned_port, has_snapshot,
+    take_snapshot_blocking,
+};
 use crate::internal::types::{AppPackLocalSettings, AppPackSnapshotMode, InstalledAppPackEntry};
+use crate::logger::logger::log_debug;
 use anyhow::{Context, Result, anyhow};
 use qapi::{Qmp, qmp};
 use std::io::{ErrorKind, Read, Write};
@@ -13,25 +17,98 @@ use std::thread;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+fn to_win_escaped_path(path: &str) -> String {
+    const PREFIX: &str = "\\\\tsclient\\home\\";
+
+    if path == "" {
+        return "".to_string();
+    }
+
+    let mut stripped_path = path;
+
+    if path.starts_with("'") && path.ends_with("'") && path.len() >= 2 {
+        stripped_path = &path[1..path.len() - 1];
+    }
+
+    if stripped_path.starts_with("/home/") {
+        // Find the slash that comes after "/home"
+        if let Some(first_slash_after_home) = stripped_path[6..].find('/') {
+            let start_index = 6 + first_slash_after_home + 1;
+            stripped_path = &stripped_path[start_index..];
+        }
+    }
+
+    let clean_path = stripped_path.trim_start_matches('/');
+    let windows_style_path = clean_path.replace('/', "\\");
+    format!("{}{}", PREFIX, windows_style_path)
+}
+
+fn detect_and_replace_win_escape(argstr: &str) -> String {
+    const FUNC_START: &str = "$TO_WIN_ESCAPED_PATH**";
+    const FUNC_END: &str = "**";
+
+    let mut result = String::new();
+    let mut current_pos = 0;
+
+    while let Some(start_relative_index) = argstr[current_pos..].find(FUNC_START) {
+        let absolute_start = current_pos + start_relative_index;
+        let arg_start = absolute_start + FUNC_START.len();
+        result.push_str(&argstr[current_pos..absolute_start]);
+
+        if let Some(end_relative_index) = argstr[arg_start..].find(FUNC_END) {
+            let absolute_end = arg_start + end_relative_index;
+            let unix_path_arg = &argstr[arg_start..absolute_end];
+            let windows_path = to_win_escaped_path(unix_path_arg).replace(" ", "$WHITESPACE");
+            result.push_str(&windows_path);
+            current_pos = absolute_end + FUNC_END.len();
+        } else {
+            // Error handling: FUNC_START found but no matching FUNC_END
+            result.push_str(&argstr[absolute_start..]);
+            current_pos = argstr.len();
+            break;
+        }
+    }
+
+    result.push_str(&argstr[current_pos..]);
+
+    result
+}
+
+// This is repetitive and ugly. To refactor.
 fn spawn_freerdp(
     rdp_port: &str,
     app_installed: &InstalledAppPackEntry,
     rdp_args: Option<&str>,
 ) -> Result<Child> {
-    let base = app_installed.freerdp_command.replace("$RDP_PORT", rdp_port);
+    let base = app_installed.freerdp_command.clone();
+    let snap_real_home = std::env::var("SNAP_REAL_HOME")?;
 
-    let full_cmd = match rdp_args {
-        Some(args) => format!("xfreerdp3 {} {}", base, args),
-        None => format!("xfreerdp3 {}", base),
+    let mut full_cmd = match rdp_args {
+        Some(args) => format!("{} {}", base, args),
+        None => base,
     };
 
-    println!("Launching freerdp: {}", full_cmd);
+    full_cmd = full_cmd
+        .replace("$RDP_PORT", rdp_port)
+        .replace("$HOME", &snap_real_home);
 
-    Ok(Command::new("bash")
-        .arg("-c")
-        .arg(full_cmd)
+    full_cmd = detect_and_replace_win_escape(&full_cmd);
+
+    let args: Vec<String> = full_cmd
+        .split_whitespace()
+        .map(|s| s.replace("$WHITESPACE", " "))
+        .collect();
+
+    println!("Launching xfreerdp3 with args: {args:?}");
+    log_debug("Launching xfreerdp3 with args: ");
+    log_debug(&args);
+
+    let child = Command::new("xfreerdp3")
+        .args(args)
         .spawn()
-        .context("Failed to launch freerdp")?)
+        .context("Failed to launch xfreerdp3")?;
+
+    Ok(child)
 }
 
 fn connect_to_appack_socket_and_launch_rdp(
@@ -47,9 +124,9 @@ fn connect_to_appack_socket_and_launch_rdp(
             println!("It looks like Qemu previously crashed. Cleaning up and starting server.");
             std::fs::remove_file(appack_socket_path).context("Failed to remove AppPack socket")?;
             return Err(anyhow!(e).context("Failed to connect to AppPack socket"));
-        },
+        }
         Err(e) => {
-            return Err(anyhow!(e).context("Failed to connect to AppPack socket"))  ;
+            return Err(anyhow!(e).context("Failed to connect to AppPack socket"));
         }
     };
 
@@ -132,7 +209,10 @@ fn appack_server_logic(
                         let mut buf = [0u8; 1];
                         match stream.read_exact(&mut buf) {
                             Ok(_) => {
-                                println!("Server: Received unexpected value from client: {}", buf[0]);
+                                println!(
+                                    "Server: Received unexpected value from client: {}",
+                                    buf[0]
+                                );
                             }
                             Err(ref e)
                                 if e.kind() == ErrorKind::UnexpectedEof
@@ -183,31 +263,6 @@ fn appack_server_logic(
     Ok((client_count, shutdown_tx, handle))
 }
 
-fn get_app_installed(
-    settings: &AppPackLocalSettings,
-    id: &str,
-    version: Option<&str>,
-) -> Result<InstalledAppPackEntry> {
-    let all_installed = settings
-        .get_installed()
-        .context("Failed to get installed app packs")?;
-
-    let matches = all_installed.installed.iter().filter(|i| i.id == id);
-
-    let filtered: Vec<&InstalledAppPackEntry> = match version {
-        Some(v) => matches.filter(|i| i.version == v).collect(),
-        None => matches.collect(),
-    };
-
-    match filtered.len() {
-        0 => Err(anyhow!("AppPack (or version) is not installed")),
-        1 => Ok(filtered[0].clone()),
-        _ => Err(anyhow!(
-            "Multiple versions installed — please specify a version"
-        )),
-    }
-}
-
 pub fn launch(
     settings: &AppPackLocalSettings,
     id: String,
@@ -220,6 +275,8 @@ pub fn launch(
     let qmp_socket_path = app_installed_home.join("qmp-appack.sock");
     let appack_socket_path = app_installed_home.join("appack.sock");
 
+    println!("Launching AppPack: {id} (version {version:?}, RDP: {rdp_args:?})");
+
     match connect_to_appack_socket_and_launch_rdp(&appack_socket_path, &app_installed, rdp_args) {
         Ok(_) => {
             return Ok(());
@@ -229,19 +286,41 @@ pub fn launch(
         }
     }
 
+    // Wait util it's not possible to connect to the QMP socket
+    // This is to handle the case when a user is trying to relaunch an appack when it's doing an OnClose snapshot
+    // or shutting down
+    {
+        loop {
+            match UnixStream::connect(&qmp_socket_path) {
+                Ok(_) => {
+                    println!(
+                        "It looks like a VM is still running for this AppPack.. Waiting for it to close"
+                    );
+                    thread::sleep(Duration::from_millis(300));
+                }
+                Err(_) => {
+                    break;
+                }
+            }
+        }
+    }
+
     let free_port = get_os_assigned_port()?;
     let absolute_image_file_path = app_installed_home.join(&app_installed.image);
 
     let mut qemu_command_str = app_installed.qemu_command.clone();
     qemu_command_str = qemu_command_str.replace("$RDP_PORT", &free_port.to_string());
-    qemu_command_str =
-        qemu_command_str.replace("$IMAGE_FILE_PATH", absolute_image_file_path.to_str().unwrap());
+    qemu_command_str = qemu_command_str.replace(
+        "$IMAGE_FILE_PATH",
+        absolute_image_file_path.to_str().unwrap(),
+    );
 
     match app_installed.snapshot_mode {
         AppPackSnapshotMode::Never => {
             let has_init_snapshot = has_snapshot("appack-init", &absolute_image_file_path)?;
             if !has_init_snapshot {
-                return Err(anyhow!("Missing snapshot 'appack-init' from image").context("The AppPack hasn't been packaged properly"))
+                return Err(anyhow!("Missing snapshot 'appack-init' from image")
+                    .context("The AppPack hasn't been packaged properly"));
             }
 
             qemu_command_str = format!("{qemu_command_str} -loadvm appack-init")
@@ -251,12 +330,16 @@ pub fn launch(
             if !has_onclose_snapshot {
                 let has_init_snapshot = has_snapshot("appack-init", &absolute_image_file_path)?;
                 if !has_init_snapshot {
-                    return Err(anyhow!("Missing snapshots 'appack-onclose', 'appack-init' from image").context("The AppPack hasn't been packaged properly"))
+                    return Err(anyhow!(
+                        "Missing snapshots 'appack-onclose', 'appack-init' from image"
+                    )
+                    .context("The AppPack hasn't been packaged properly"));
                 }
-                println!("AppPack hasn't been packaged properly, using 'appack-init' snapshot as backup");
+                println!(
+                    "AppPack hasn't been packaged properly, using 'appack-init' snapshot as backup"
+                );
                 qemu_command_str = format!("{qemu_command_str} -loadvm appack-init")
-            }
-            else {
+            } else {
                 qemu_command_str = format!("{qemu_command_str} -loadvm appack-onclose")
             }
         }
@@ -264,12 +347,12 @@ pub fn launch(
     }
 
     println!("Starting Qemu with params: {}", qemu_command_str);
+    let qemu_command_args = qemu_command_str.split_whitespace().collect::<Vec<&str>>();
 
-    let mut qemu_command = Command::new("bash");
+    let mut qemu_command = Command::new("qemu-system-x86_64");
     qemu_command
         .current_dir(app_installed_home) // Necessary to make the qmp socket in the dir, although we could find and replace it like other vars it
-        .arg("-c")
-        .arg(format!("qemu-system-x86_64 {qemu_command_str}"));
+        .args(qemu_command_args);
     let mut qemu_child = qemu_command.spawn()?;
 
     // Wait for qmp socket to be available
@@ -280,7 +363,7 @@ pub fn launch(
                 match UnixStream::connect(&qmp_socket_path) {
                     Ok(_) => {
                         break;
-                    },
+                    }
                     Err(e) => {
                         println!("Waiting for QMP socket connection: {}", e);
                         thread::sleep(Duration::from_millis(200));
@@ -291,7 +374,8 @@ pub fn launch(
             // 2. Ok(Some(status)): Child has EXITED
             Ok(Some(status)) => {
                 eprintln!("QEMU process unexpectedly exited with status: {}", status);
-                return Err(anyhow!("QEMU process died before QMP socket was ready.").context("QEMU failed to start"));
+                return Err(anyhow!("QEMU process died before QMP socket was ready.")
+                    .context("QEMU failed to start"));
             }
 
             // 3. Err(e): An error occurred while trying to check the status
@@ -331,17 +415,25 @@ pub fn launch(
 
     match app_installed.snapshot_mode {
         AppPackSnapshotMode::OnClose => {
-            println!("App has snapshot mode OnClose, taking 'appack-onclose' snapshot before quitting");
+            println!(
+                "App has snapshot mode OnClose, taking 'appack-onclose' snapshot before quitting"
+            );
+
+            // Wait a little bit before taking the snapshot, so the OS has time to finish the logoff
+            thread::sleep(Duration::from_millis(500));
+
             // This can fail silently if the snapshot doesn't exist for example
             let _ = delete_snapshot_blocking(&mut qmp, "appack-onclose");
             take_snapshot_blocking(&mut qmp, "appack-onclose")?;
         }
-        _ => {},
+        _ => {}
     }
 
     match qmp.execute(&qmp::quit {}) {
         Ok(_) => {
-            qemu_child.wait()?;
+            qemu_child
+                .wait()
+                .context("Failed to wait for qemu process to exit")?;
         }
         Err(e) => {
             println!("Failed to execute quit QMP: {}", e);
@@ -352,4 +444,102 @@ pub fn launch(
     println!("Qemu exited");
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_path_with_username_and_file() {
+        // Test case: standard path with username and file
+        let path = "/home/john_doe/documents/report.pdf";
+        let expected = "\\\\tsclient\\home\\documents\\report.pdf";
+        assert_eq!(to_win_escaped_path(path), expected);
+    }
+
+    #[test]
+    fn test_path_with_different_username() {
+        // Test case: different username
+        let path = "/home/dev-user/code/main.rs";
+        let expected = "\\\\tsclient\\home\\code\\main.rs";
+        assert_eq!(to_win_escaped_path(path), expected);
+    }
+
+    #[test]
+    fn test_path_with_no_trailing_file() {
+        // Test case: path is just a directory after the username
+        let path = "/home/alice/Projects/";
+        let expected = "\\\\tsclient\\home\\Projects\\";
+        assert_eq!(to_win_escaped_path(path), expected);
+    }
+
+    #[test]
+    fn test_path_is_only_root_home() {
+        // Test case: path is exactly /home/{username} (edge case, result is the root share path)
+        let path = "/home/bob";
+        let expected = "\\\\tsclient\\home\\home\\bob";
+        // NOTE: The current simple implementation relies on finding the *next* slash.
+        // If the input path is exactly `/home/username`, the implementation assumes it's
+        // not a valid path and doesn't strip it, leaving it as a relative path.
+        // If the desired output for `/home/bob` is `\\\\tsclient\\home\\`, then the
+        // function's logic needs more complexity. Sticking to the primary request:
+        // /home/anyusername/ is the pattern to remove. Since there's no trailing '/',
+        // the path is NOT stripped.
+        assert_eq!(to_win_escaped_path(path), expected);
+    }
+
+    #[test]
+    fn test_path_is_only_root_home_with_slash() {
+        // Test case: path is exactly /home/{username}/ (should be stripped to empty)
+        let path = "/home/bob/";
+        let expected = "\\\\tsclient\\home\\";
+        assert_eq!(to_win_escaped_path(path), expected);
+    }
+
+    #[test]
+    fn test_path_already_stripped() {
+        // Test case: path does not start with /home/
+        let path = "/tmp/data/log.txt";
+        let expected = "\\\\tsclient\\home\\tmp\\data\\log.txt";
+        assert_eq!(to_win_escaped_path(path), expected);
+    }
+
+    #[test]
+    fn test_relative_path() {
+        // Test case: relative path
+        let path = "data/input.csv";
+        let expected = "\\\\tsclient\\home\\data\\input.csv";
+        assert_eq!(to_win_escaped_path(path), expected);
+    }
+
+    #[test]
+    fn test_empty_path() {
+        // Test case: empty path
+        let path = "";
+        let expected = "";
+        assert_eq!(to_win_escaped_path(path), expected);
+    }
+
+    #[test]
+    fn test_path_with_leading_slash_only() {
+        // Test case: just a leading slash (should result in the base path)
+        let path = "/";
+        let expected = "\\\\tsclient\\home\\";
+        assert_eq!(to_win_escaped_path(path), expected);
+    }
+
+    #[test]
+    fn test_with_space() {
+        let path = "/home/dude/i have space/file.txt";
+        let expected = "\\\\tsclient\\home\\i have space\\file.txt";
+        assert_eq!(to_win_escaped_path(path), expected);
+    }
+
+    #[test]
+    fn test_with_space_and_single_quotes() {
+        let path = "'/home/dude/i have space/file.txt'";
+        let expected = "\\\\tsclient\\home\\i have space\\file.txt";
+        assert_eq!(to_win_escaped_path(path), expected);
+    }
 }

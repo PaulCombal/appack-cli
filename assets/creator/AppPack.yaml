@@ -10,8 +10,11 @@ readme:
   index: README.md
 desktop_entries:
   - entry: desktop/ms-cmd.desktop
-    icon: desktop/ms-ms-cmd.svg
+    icon: desktop/ms-cmd.svg
     rdp_args: /app:program:cmd.exe
+  - entry: desktop/plain-rdp.desktop
+    icon: desktop/ms-cmd.svg
+    rdp_args: /drive:home,$HOME
 base_command: >-
   -enable-kvm
   -cpu host,migratable=on,hv-time=on,hv-relaxed=on,hv-vapic=on,hv-spinlocks=0x1fff
@@ -30,6 +33,7 @@ install_append: >-
   -drive file=installer.iso,media=cdrom
   -drive file=guest-addons.iso,media=cdrom
 configure_append: >-
+  -display none
   -qmp unix:qmp-appack.sock,server=on,wait=off
 freerdp_command: >-
   /v:localhost:$RDP_PORT
