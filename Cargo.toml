@@ -15,6 +15,7 @@ anyhow = { version = "1" }
 serde = { version = "1", features = ["derive"] }
 serde_yaml = { version = "0.9" }
 qapi = { version = "0", features = [ "qmp" ] }
+notify-rust = {version = "4"}
 
 [[bin]]
 name = "appack"

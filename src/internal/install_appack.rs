@@ -1,6 +1,22 @@
-use crate::internal::types::{
-    AppPackDesktopEntry, AppPackLocalSettings, InstalledAppPackEntry, InstalledAppPacks,
-};
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2025 Paul <abonnementspaul (at) gmail.com>
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, version 3.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+use crate::types::AppDesktopEntry;
+use crate::types::app_build_config::AppBuildConfig;
+use crate::types::app_installed::{InstalledAppPackEntry, InstalledAppPacks};
+use crate::types::local_settings::AppPackLocalSettings;
 use anyhow::{Context, Result, anyhow};
 use std::collections::HashSet;
 use std::fs::File;
@@ -14,19 +30,17 @@ use zip::ZipArchive;
 /// https://specifications.freedesktop.org/desktop-entry-spec/1.1/value-types.html
 fn process_desktop_entry(
     file_entry_contents: &str,
-    desktop_entry: &AppPackDesktopEntry,
+    desktop_entry: &AppDesktopEntry,
     app: &InstalledAppPackEntry,
     settings: &AppPackLocalSettings,
 ) -> Result<String> {
     let icon_dir = settings.get_app_home_dir(app).join("desktop");
 
     let appack_launch_cmd = if desktop_entry.rdp_args.is_empty() {
-        format!(
-            "appack launch {} --version={}",
-            app.id, app.version
-        )
+        format!("appack launch {} --version={}", app.id, app.version)
     } else {
-        let escaped_rdp_args = desktop_entry.rdp_args
+        let escaped_rdp_args = desktop_entry
+            .rdp_args
             .replace('\\', "\\\\")
             .replace('"', "\\\"");
 
@@ -39,7 +53,10 @@ fn process_desktop_entry(
     let final_contents = file_entry_contents
         .replace("$APPACK_LAUNCH_CMD", &appack_launch_cmd)
         .replace("$ICON_DIR", icon_dir.to_str().unwrap())
-        .replace("$ICON_FULL_PATH", icon_dir.join(&desktop_entry.icon).to_str().unwrap());
+        .replace(
+            "$ICON_FULL_PATH",
+            icon_dir.join(&desktop_entry.icon).to_str().unwrap(),
+        );
 
     println!("Installed desktop entry with supposed exec line: `{appack_launch_cmd}`");
 
@@ -128,6 +145,11 @@ fn extract_config(archive: &mut ZipArchive<File>) -> Result<InstalledAppPackEntr
     serde_yaml::from_slice(&buffer).context("Invalid YAML file")
 }
 
+// Needs improvement:
+// If the installation only partially finishes and is interrupted, clean the previous installation
+// and try again if the user tries to install the same app again.
+// We cannot use a temp dir because Snap hits us with cross-device errors when trying to copy over
+// and desktop entries must be copied in a different directory
 fn extract_files(
     archive: &mut ZipArchive<File>,
     new_app_entry: &InstalledAppPackEntry,
@@ -233,14 +255,7 @@ fn check_valid_app_pack(
     new_app_entry: &InstalledAppPackEntry,
     installed: &InstalledAppPacks,
 ) -> Result<()> {
-    // TODO: deduplicate with AppPackIndexFile::new
-    let forbidden_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|', ' ', '&', ';'];
-
-    if new_app_entry
-        .version
-        .chars()
-        .any(|c| forbidden_chars.contains(&c))
-    {
+    if !AppBuildConfig::is_valid_version(&new_app_entry.version) {
         return Err(anyhow!(
             "Invalid character in version: {}",
             new_app_entry.version
@@ -285,10 +300,9 @@ fn check_valid_app_pack(
     Ok(())
 }
 
-// Todo: make this atomic as in if it fails then the halfway done files should be removed
 pub fn install_appack(file_path: PathBuf, settings: AppPackLocalSettings) -> Result<()> {
     let file = File::open(&file_path).context(format!("Unable to open file {file_path:?}"))?;
-    let mut archive = ZipArchive::new(file).context("Unable to file as zip archive")?;
+    let mut archive = ZipArchive::new(file).context("Unable to open file as zip archive")?;
 
     settings.check_ok()?;
     let new_app_entry = extract_config(&mut archive)?;

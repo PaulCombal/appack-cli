@@ -13,13 +13,22 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use crate::types::local_settings::AppPackLocalSettings;
-use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
-pub fn list_installed(settings: AppPackLocalSettings) -> Result<()> {
-    let installed_apps = settings.get_installed()?;
-    println!("Installed app packs:");
-    println!("{:#?}", installed_apps); // Todo impl display or something
+pub mod app_build_config;
+pub mod app_installed;
+pub mod local_settings;
 
-    Ok(())
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppDesktopEntry {
+    pub entry: String,
+    pub icon: String,
+    pub rdp_args: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AppSnapshotTriggerMode {
+    OnClose,
+    Never,
+    NeverLoad,
 }

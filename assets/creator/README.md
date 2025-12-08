@@ -8,7 +8,7 @@ liking.
 ### Getting started
 
 Step one is to boot up your operating system and install it on disk.
-As you see `AppPack.yaml` contains the command arguments which will be passed to Qemu to start the VM. The
+As you see `AppPackBuildConfig.yaml` contains the command arguments which will be passed to Qemu to start the VM. The
 `install_append` section will only be appended to the Qemu command when launching the VM for the first time.
 The main difference with other boot options is the definition of the installation medium. Make sure to place your
 installation files (most likely `.iso` files) according to this section.

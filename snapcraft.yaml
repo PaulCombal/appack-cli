@@ -1,55 +1,41 @@
 name: appack
-version: "0.1"
-summary: TEST SUMMARY
-description: TEST DESCRIPTION
+title: AppPack
+version: 0.1.0
+summary: Run apps made for any operating system
+description: |
+  AppPack is a cross-platform app launcher that runs apps made for any operating system.
+  It supports virtually any operating system, including Windows, macOS, and Linux.
+  It is designed to be as simple to use as possible.
+  It makes use of virtualization technologies and RDP under the hood to run apps in a virtual machine.
 confinement: strict
 base: core24
 license: GPL-3.0-only
+source-code:
+  - https://github.com/PaulCombal/appack-cli
 
 apps:
   appack:
     command: bin/appack
-    environment:
-      LD_LIBRARY_PATH: ${LD_LIBRARY_PATH}:${SNAP}/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/pulseaudio
-    # TODO: cleanup useless plugs
-    plugs:
-      - desktop # probably not needed? Check if personal-files is enough
-      - network # ?
-      - alsa # Probably needed
-      - pulseaudio # Probably needed
-      - x11 # Probably needed
-      - wayland # Probably needed
-      - audio-playback # Probably needed
-      - audio-record # Probably needed
-      - kvm # Needed
-      - home # Needed
-      - opengl # Needed
-      - process-control # Probably needed??
-      - raw-usb # Probably needed??
-      - removable-media # Will figure that one later
-      - screen-inhibit-control # ?
-      - network-bind # ?
-      - network-control # Probably NOT needed
-      - dot-local-share-applications # to add desktop entries
-
-#  qemu:
-#    command: usr/bin/qemu-system-x86_64
-##    command-chain: [ bin/runner ]
+    extensions: [gnome]
 #    environment:
-#      LD_LIBRARY_PATH: $SNAP/usr/lib:$SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/lib:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:${SNAP}/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/pulseaudio
-#    plugs:
-#      - audio-playback
-#      - audio-record
-#      - kvm
-#      - home
-#      - opengl
-#      - process-control
-#      - raw-usb
-#      - removable-media
-#      - screen-inhibit-control
-#      - network
-#      - network-bind
-#      - network-control
+#      LD_LIBRARY_PATH: ${LD_LIBRARY_PATH}:${SNAP}/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/pulseaudio
+    plugs:
+      - desktop # Needed to send notifications
+      - network
+      - network-bind
+      - alsa
+      - pulseaudio
+      - x11
+      - wayland
+      - audio-playback
+      - audio-record
+      - kvm # Needed, try to request autoconnect
+      - home
+      - opengl
+      - raw-usb
+      - removable-media
+      - screen-inhibit-control
+      - dot-local-share-applications
 
 parts:
   snapbuildtools:

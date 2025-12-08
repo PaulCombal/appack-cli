@@ -1,9 +1,24 @@
-use crate::internal::helpers::{
-    delete_snapshot_blocking, get_app_installed, get_os_assigned_port, has_snapshot,
-    take_snapshot_blocking,
-};
-use crate::internal::types::{AppPackLocalSettings, AppPackSnapshotMode, InstalledAppPackEntry};
-use crate::logger::logger::log_debug;
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2025 Paul <abonnementspaul (at) gmail.com>
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, version 3.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+use crate::internal::helpers::{get_os_assigned_port, has_snapshot};
+use crate::types::AppSnapshotTriggerMode;
+use crate::types::app_installed::InstalledAppPackEntry;
+use crate::types::local_settings::AppPackLocalSettings;
+use crate::utils::logger::log_debug;
+use crate::utils::qmp::{delete_snapshot_blocking, take_snapshot_blocking};
 use anyhow::{Context, Result, anyhow};
 use qapi::{Qmp, qmp};
 use std::io::{ErrorKind, Read, Write};
@@ -269,8 +284,9 @@ pub fn launch(
     version: Option<&str>,
     rdp_args: Option<&str>,
 ) -> Result<()> {
-    let app_installed =
-        get_app_installed(settings, &id, version).context("Failed to get installed AppPack")?;
+    let app_installed = settings
+        .get_app_installed(&id, version)
+        .context("Failed to get installed AppPack")?;
     let app_installed_home = settings.get_app_home_dir(&app_installed);
     let qmp_socket_path = app_installed_home.join("qmp-appack.sock");
     let appack_socket_path = app_installed_home.join("appack.sock");
@@ -290,9 +306,19 @@ pub fn launch(
     // This is to handle the case when a user is trying to relaunch an appack when it's doing an OnClose snapshot
     // or shutting down
     {
+        let mut notif_shown = false;
         loop {
             match UnixStream::connect(&qmp_socket_path) {
                 Ok(_) => {
+                    if !notif_shown {
+                        notify_rust::Notification::new()
+                            .summary(&format!("\"{}\" will open soon", app_installed.name))
+                            .body("Please be patient while we're setting things up")
+                            .show()
+                            .context("Failed to show desktop notification")?;
+                        notif_shown = true;
+                    }
+
                     println!(
                         "It looks like a VM is still running for this AppPack.. Waiting for it to close"
                     );
@@ -316,7 +342,11 @@ pub fn launch(
     );
 
     match app_installed.snapshot_mode {
-        AppPackSnapshotMode::Never => {
+        // Never load any state, cold boot
+        AppSnapshotTriggerMode::NeverLoad => {}
+
+        // Always load the same startup state
+        AppSnapshotTriggerMode::Never => {
             let has_init_snapshot = has_snapshot("appack-init", &absolute_image_file_path)?;
             if !has_init_snapshot {
                 return Err(anyhow!("Missing snapshot 'appack-init' from image")
@@ -325,25 +355,33 @@ pub fn launch(
 
             qemu_command_str = format!("{qemu_command_str} -loadvm appack-init")
         }
-        AppPackSnapshotMode::OnClose => {
+
+        // Load the most significant or none at all
+        AppSnapshotTriggerMode::OnClose => {
             let has_onclose_snapshot = has_snapshot("appack-onclose", &absolute_image_file_path)?;
             if !has_onclose_snapshot {
                 let has_init_snapshot = has_snapshot("appack-init", &absolute_image_file_path)?;
-                if !has_init_snapshot {
-                    return Err(anyhow!(
-                        "Missing snapshots 'appack-onclose', 'appack-init' from image"
-                    )
-                    .context("The AppPack hasn't been packaged properly"));
+                if has_init_snapshot {
+                    println!(
+                        "AppPack doesn't have a running state, using 'appack-init' snapshot as backup"
+                    );
+                    qemu_command_str = format!("{qemu_command_str} -loadvm appack-init")
+                } else {
+                    println!("AppPack doesn't have any live state, doing cold boot as backup");
+
+                    notify_rust::Notification::new()
+                        .summary(&format!(
+                            "Launching \"{}\" for the first time",
+                            app_installed.name
+                        ))
+                        .body("Please be patient while we're setting things up")
+                        .show()
+                        .context("Failed to show desktop notification")?;
                 }
-                println!(
-                    "AppPack hasn't been packaged properly, using 'appack-init' snapshot as backup"
-                );
-                qemu_command_str = format!("{qemu_command_str} -loadvm appack-init")
             } else {
                 qemu_command_str = format!("{qemu_command_str} -loadvm appack-onclose")
             }
         }
-        AppPackSnapshotMode::NeverLoad => {}
     }
 
     println!("Starting Qemu with params: {}", qemu_command_str);
@@ -375,7 +413,7 @@ pub fn launch(
             Ok(Some(status)) => {
                 eprintln!("QEMU process unexpectedly exited with status: {}", status);
                 return Err(anyhow!("QEMU process died before QMP socket was ready.")
-                    .context("QEMU failed to start"));
+                    .context("Qemu failed to start. Make sure you installed AppPack with the command on the Readme (with the appropriate connections)."));
             }
 
             // 3. Err(e): An error occurred while trying to check the status
@@ -414,7 +452,7 @@ pub fn launch(
     qmp.handshake().context("Failed to connect to QMP socket")?;
 
     match app_installed.snapshot_mode {
-        AppPackSnapshotMode::OnClose => {
+        AppSnapshotTriggerMode::OnClose => {
             println!(
                 "App has snapshot mode OnClose, taking 'appack-onclose' snapshot before quitting"
             );

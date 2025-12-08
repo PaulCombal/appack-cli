@@ -13,13 +13,6 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use crate::types::local_settings::AppPackLocalSettings;
-use anyhow::Result;
-
-pub fn list_installed(settings: AppPackLocalSettings) -> Result<()> {
-    let installed_apps = settings.get_installed()?;
-    println!("Installed app packs:");
-    println!("{:#?}", installed_apps); // Todo impl display or something
-
-    Ok(())
-}
+pub mod logger;
+pub mod qmp;
+pub mod zip_dir;

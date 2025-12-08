@@ -1,9 +1,24 @@
-use crate::internal::helpers::{
-    delete_snapshot_blocking, get_os_assigned_port, take_snapshot_blocking, zip_dir,
-};
-use crate::internal::types::{
-    AppPackDesktopEntry, AppPackIndexFile, AppPackSnapshotMode, InstalledAppPackEntry,
-};
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2025 Paul <abonnementspaul (at) gmail.com>
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, version 3.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+use crate::internal::helpers::get_os_assigned_port;
+use crate::types::app_build_config::AppBuildConfig;
+use crate::types::app_installed::InstalledAppPackEntry;
+use crate::types::{AppDesktopEntry, AppSnapshotTriggerMode};
+use crate::utils::qmp::{delete_snapshot_blocking, has_snapshot_qmp, take_snapshot_blocking};
+use crate::utils::zip_dir::zip_dir;
 use anyhow::{Context, Result, anyhow};
 use qapi::{Qmp, qmp};
 use std::io::Write;
@@ -71,14 +86,13 @@ fn terminate_xfreerdp3() -> Result<()> {
             break;
         }
 
-        println!("Waiting for processes to exit...");
-        std::thread::sleep(std::time::Duration::from_secs(1));
+        thread::sleep(Duration::from_secs(1));
     }
 
     Ok(())
 }
 
-fn zip_appack(config: &AppPackIndexFile) -> Result<()> {
+fn zip_appack(config: &AppBuildConfig) -> Result<()> {
     let zip_name = format!("{}_{}.zip", config.id, config.version);
     let zip_file = std::fs::File::create(zip_name).context("Failed to create zip file")?;
     let mut zip = ZipWriter::new(zip_file);
@@ -134,7 +148,7 @@ fn zip_appack(config: &AppPackIndexFile) -> Result<()> {
                 }
             };
 
-            let installed_desktop_entry = AppPackDesktopEntry {
+            let installed_desktop_entry = AppDesktopEntry {
                 entry: entry_file_name.to_string_lossy().to_string(),
                 icon: entry_icon_name.to_string_lossy().to_string(),
                 rdp_args: entry.rdp_args.clone(),
@@ -182,8 +196,8 @@ pub fn creator_new() -> Result<()> {
         "AppPack/readme/README.md",
     )?;
     std::fs::copy(
-        assets_path.join("creator").join("AppPack.yaml"),
-        "AppPack/AppPack.yaml",
+        assets_path.join("creator").join("AppPackBuildConfig.yaml"),
+        "AppPack/AppPackBuildConfig.yaml",
     )?;
     std::fs::copy(
         assets_path.join("creator").join("ms-cmd.desktop"),
@@ -204,7 +218,7 @@ pub fn creator_new() -> Result<()> {
 }
 
 pub fn creator_boot_install() -> Result<()> {
-    let config = AppPackIndexFile::new(Path::new("AppPack.yaml"))?;
+    let config = AppBuildConfig::new(Path::new("AppPackBuildConfig.yaml"))?;
 
     let mut command = config.get_boot_install_command();
 
@@ -214,7 +228,7 @@ pub fn creator_boot_install() -> Result<()> {
 }
 
 pub fn creator_boot() -> Result<()> {
-    let config = AppPackIndexFile::new(Path::new("AppPack.yaml"))?;
+    let config = AppBuildConfig::new(Path::new("AppPackBuildConfig.yaml"))?;
     let free_port = get_os_assigned_port()?;
 
     let mut qemu_command = config.get_boot_configure_command(free_port);
@@ -241,7 +255,7 @@ pub fn creator_boot() -> Result<()> {
             Ok(Some(status)) => {
                 eprintln!("QEMU process unexpectedly exited with status: {}", status);
                 return Err(anyhow!("QEMU process died before QMP socket was ready.")
-                    .context("QEMU failed to start"));
+                    .context("Qemu failed to start. Make sure you installed AppPack with the command on the Readme (with the appropriate connections)."));
             }
 
             // 3. Err(e): An error occurred while trying to check the status
@@ -278,12 +292,32 @@ pub fn creator_boot() -> Result<()> {
 // It is probably possible to optimize this further.
 pub fn creator_snapshot() -> Result<()> {
     // We read the config first to validate its contents before proceeding with the snapshot
-    let config = AppPackIndexFile::new(Path::new("AppPack.yaml"))?;
+    let config = AppBuildConfig::new(Path::new("AppPackBuildConfig.yaml"))?;
     let socket_addr = "./qmp-appack.sock";
     let stream = UnixStream::connect(socket_addr).context("Failed to connect to QMP socket")?;
     let mut qmp = Qmp::from_stream(&stream);
 
     qmp.handshake().context("Failed to handshake with QMP")?;
+
+    match has_snapshot_qmp(&mut qmp, "appack-init") {
+        Ok(true) => {
+            return Err(anyhow!(
+                "Snapshot 'appack-init' already exists. Please delete it first."
+            ));
+        }
+        Err(e) => return Err(e),
+        _ => {}
+    }
+
+    match has_snapshot_qmp(&mut qmp, "appack-onclose") {
+        Ok(true) => {
+            return Err(anyhow!(
+                "Snapshot 'appack-onclose' already exists. Please delete it first."
+            ));
+        }
+        Err(e) => return Err(e),
+        _ => {}
+    }
 
     // 1. Close RDP connections (ctrl+c on xfreerdp?)
     terminate_xfreerdp3()?;
@@ -291,18 +325,15 @@ pub fn creator_snapshot() -> Result<()> {
     // 2. Pause VM
     qmp.execute(&qmp::stop {}).context("Failed to stop VM")?;
 
-    // 2.5 (TODO) Check if the image already have snapshots
-
     // 3. Take a snapshot (internal)
     match config.snapshot {
-        AppPackSnapshotMode::OnClose => {
-            take_snapshot_blocking(&mut qmp, "appack-init")?;
-            take_snapshot_blocking(&mut qmp, "appack-onclose")?;
-        }
-        AppPackSnapshotMode::Never => {
+        AppSnapshotTriggerMode::OnClose => {
             take_snapshot_blocking(&mut qmp, "appack-init")?;
         }
-        AppPackSnapshotMode::NeverLoad => {}
+        AppSnapshotTriggerMode::Never => {
+            take_snapshot_blocking(&mut qmp, "appack-init")?;
+        }
+        AppSnapshotTriggerMode::NeverLoad => {}
     }
 
     // 4. Destroy the VM. Why do this gracefully?
@@ -326,7 +357,7 @@ pub fn creator_snapshot() -> Result<()> {
 }
 
 pub fn creator_pack() -> Result<()> {
-    let config = AppPackIndexFile::new(Path::new("AppPack.yaml"))?;
+    let config = AppBuildConfig::new(Path::new("AppPackBuildConfig.yaml"))?;
     match zip_appack(&config) {
         Ok(_) => Ok(()),
         Err(e) => {

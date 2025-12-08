@@ -1,0 +1,11 @@
+.*
+*.lock
+*.toml
+*.md
+*.yaml
+*.snap
+*.xml
+*.png
+assets/*
+target/*
+snapbuildtools/*

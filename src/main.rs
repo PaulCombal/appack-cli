@@ -1,5 +1,21 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2025 Paul <abonnementspaul (at) gmail.com>
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, version 3.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 mod internal;
-mod logger;
+mod types;
+mod utils;
 
 use crate::internal::creator::{
     creator_boot, creator_boot_install, creator_new, creator_pack, creator_snapshot,
@@ -9,9 +25,10 @@ use crate::internal::install_appack::install_appack;
 use crate::internal::launch::launch;
 use crate::internal::list_installed::list_installed;
 use crate::internal::reset::reset;
-use crate::internal::types::AppPackLocalSettings;
 use crate::internal::uninstall_appack::uninstall_appack;
-use crate::logger::logger::log_debug;
+use crate::internal::version::print_version;
+use crate::types::local_settings::AppPackLocalSettings;
+use crate::utils::logger::log_debug;
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
@@ -55,7 +72,10 @@ enum CliAction {
         version: Option<String>,
     },
 
-    Info,
+    Version,
+    Info {
+        file: PathBuf,
+    },
 }
 
 #[derive(Debug, Subcommand, ValueEnum, Clone)]
@@ -73,7 +93,7 @@ fn main() -> Result<()> {
     let args = match Cli::try_parse() {
         Ok(args) => args,
         Err(e) => {
-            log_debug("Error parsing args:");
+            log_debug("Error parsing arguments:");
             log_debug(&e);
             return Err(anyhow::anyhow!(e));
         }
@@ -104,27 +124,23 @@ fn main() -> Result<()> {
         CliAction::ListInstalled => {
             list_installed(settings)?;
         }
-        CliAction::Info => {
-            print_info(&settings);
+        CliAction::Version => {
+            print_version(&settings)?;
+        }
+        CliAction::Info { file } => {
+            print_info(&file)?;
         }
         CliAction::Launch {
             id,
             version,
             rdp_args,
-        } => match launch(&settings, id, version.as_deref(), rdp_args.as_deref()) {
-            Ok(_) => {}
-            Err(e) => {
-                log_debug("Error launching app pack:");
-                log_debug(&e);
-                return Err(anyhow::anyhow!(e));
-            }
-        },
+        } => {
+            launch(&settings, id, version.as_deref(), rdp_args.as_deref())?;
+        }
         CliAction::Reset { id, version } => {
             reset(&settings, id, version.as_deref())?;
         }
     }
-
-    log_debug("AppPack stopped");
 
     Ok(())
 }
