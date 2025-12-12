@@ -65,13 +65,14 @@ impl AppBuildConfig {
 
     pub fn get_rdp_configure_command(&self, rdp_port: u16) -> Command {
         let snap_real_home = std::env::var("SNAP_REAL_HOME").unwrap();
-        let full_command = self.configure_freerdp.clone();
-        let full_command = full_command.replace("$RDP_PORT", &rdp_port.to_string());
-        let full_command = full_command.replace("$HOME", &snap_real_home);
-
-        println!("Full RDP configure {}", full_command);
+        let full_command = format!("{} /v:localhost:$RDP_PORT", self.configure_freerdp)
+            .replace("$RDP_PORT", &rdp_port.to_string())
+            .replace("$HOME", &snap_real_home);
 
         let full_command_args = full_command.split_whitespace().collect::<Vec<&str>>();
+
+        println!("Full RDP args {:?}", full_command_args);
+
         let mut command = Command::new("xfreerdp3");
         command.args(full_command_args);
         command

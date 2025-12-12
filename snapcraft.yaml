@@ -1,6 +1,6 @@
 name: appack
 title: AppPack
-version: 0.1.0
+version: 0.1.1
 summary: Run apps made for any operating system
 description: |
   AppPack is a cross-platform app launcher that runs apps made for any operating system.
@@ -11,6 +11,8 @@ confinement: strict
 base: core24
 license: GPL-3.0-only
 source-code:
+  - https://github.com/PaulCombal/appack-cli
+website:
   - https://github.com/PaulCombal/appack-cli
 
 apps:

@@ -36,7 +36,6 @@ configure_append: >-
   -display egl-headless,gl=on
   -qmp unix:qmp-appack.sock,server=on,wait=off
 configure_freerdp: >-
-  /v:localhost:$RDP_PORT
   /u:VmUser
   /p:VmPassword
   /cert:ignore

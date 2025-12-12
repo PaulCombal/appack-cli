@@ -99,8 +99,8 @@ fn spawn_freerdp(
     let snap_real_home = std::env::var("SNAP_REAL_HOME")?;
 
     let mut full_cmd = match rdp_args {
-        Some(args) => format!("{} {}", base, args),
-        None => base,
+        Some(args) => format!("{} {} /v:localhost:$RDP_PORT", base, args),
+        None => format!("{} /v:localhost:$RDP_PORT", base),
     };
 
     full_cmd = full_cmd

@@ -25,3 +25,12 @@ sudo snap install *.snap --dangerous
 sudo snap connect appack:kvm
 sudo snap connect appack:alsa
 sudo snap connect appack:dot-local-share-applications
+
+# Cheatsheet
+# https://documentation.ubuntu.com/snapcraft/stable/how-to/publishing/manage-revisions-and-releases/
+
+# Publish+upload: snapcraft upload <snap-revision>.snap --release <channel>
+# Publish+upload: snapcraft upload appack_*.snap --release stable
+
+# Upload: snapcraft upload <snap-revision>.snap
+# Publish: snapcraft release <snap-name> <revision> <channel>

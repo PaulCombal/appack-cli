@@ -95,6 +95,9 @@ fn main() -> Result<()> {
         Err(e) => {
             log_debug("Error parsing arguments:");
             log_debug(&e);
+
+            // Keep the clap error message formatting
+            Cli::parse();
             return Err(anyhow::anyhow!(e));
         }
     };
