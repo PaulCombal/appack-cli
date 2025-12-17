@@ -185,7 +185,7 @@ fn extract_files(
 
     std::fs::create_dir_all(&new_app_base_dir.join("desktop"))?;
 
-    println!("Extracting app data.. This may take a while.");
+    println!("Extracting app data.. This can take a few minutes.");
 
     {
         let mut image_file = archive
@@ -211,9 +211,8 @@ fn extract_files(
                     entry.entry
                 ))?;
 
-            let entry_fullpath = local_settings
-                .desktop_entries_dir
-                .join(format!("{new_app_version}_{}", entry.entry));
+            let entry_fullpath = local_settings.get_desktop_entry_path(new_app_entry, entry);
+
             let mut outfile =
                 File::create(&entry_fullpath).context("Unable to create desktop entry file")?;
 

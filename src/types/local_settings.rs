@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+use crate::types::AppDesktopEntry;
 use crate::types::app_installed::{InstalledAppPackEntry, InstalledAppPacks};
 use anyhow::{Context, anyhow};
 use std::path::PathBuf;
@@ -37,7 +38,8 @@ impl Default for AppPackLocalSettings {
             desktop_entries_dir: user_real_home
                 .join(".local")
                 .join("share")
-                .join("applications"),
+                .join("applications")
+                .join("appack"),
         }
     }
 
@@ -55,7 +57,8 @@ impl Default for AppPackLocalSettings {
             desktop_entries_dir: user_real_home
                 .join(".local")
                 .join("share")
-                .join("applications"),
+                .join("applications")
+                .join("appack"),
         }
     }
 }
@@ -70,10 +73,14 @@ impl AppPackLocalSettings {
         }
 
         if !self.desktop_entries_dir.exists() {
-            return Err(anyhow!(
-                "Desktop entries directory does not exist: {}",
-                self.desktop_entries_dir.display()
-            ).context("Make sure this directory exists and that you installed AppPack using the command line from the README (that the necessary plugs are connected)"));
+            match std::fs::create_dir_all(&self.desktop_entries_dir) {
+                Ok(_) => {}
+                Err(e) => {
+                    return Err(
+                        anyhow!("Desktop entries directory does not exist and could not be created: {} ({e})",self.desktop_entries_dir.display()
+                    ).context("Make sure this directory exists and that you installed AppPack using the command line from the README (that the necessary plugs are connected)"));
+                }
+            }
         }
 
         Ok(())
@@ -139,5 +146,16 @@ impl AppPackLocalSettings {
                 "Multiple versions installed — please specify a version"
             )),
         }
+    }
+
+    pub fn get_desktop_entry_path(
+        &self,
+        app_entry: &InstalledAppPackEntry,
+        desktop_entry: &AppDesktopEntry,
+    ) -> PathBuf {
+        self.desktop_entries_dir.join(format!(
+            "{}_{}_{}",
+            app_entry.id, app_entry.version, desktop_entry.entry
+        ))
     }
 }

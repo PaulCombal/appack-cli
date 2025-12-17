@@ -25,7 +25,7 @@ use crate::internal::install_appack::install_appack;
 use crate::internal::launch::launch;
 use crate::internal::list_installed::list_installed;
 use crate::internal::reset::reset;
-use crate::internal::uninstall_appack::uninstall_appack;
+use crate::internal::uninstall_appack::{uninstall_all_appacks, uninstall_appack};
 use crate::internal::version::print_version;
 use crate::types::local_settings::AppPackLocalSettings;
 use crate::utils::logger::log_debug;
@@ -49,7 +49,13 @@ enum CliAction {
 
     #[clap(alias = "u")]
     Uninstall {
-        id: String,
+        #[arg(required_unless_present = "all", conflicts_with = "all")]
+        id: Option<String>,
+        #[arg(requires = "id")]
+        version: Option<String>,
+
+        #[arg(long)]
+        all: bool,
     },
 
     Creator {
@@ -106,7 +112,13 @@ fn main() -> Result<()> {
 
     match args.action {
         CliAction::Install { file } => install_appack(file, settings)?,
-        CliAction::Uninstall { id } => uninstall_appack(&settings, &id)?,
+        CliAction::Uninstall { id, version, all } => {
+            if all {
+                uninstall_all_appacks(&settings)?
+            } else {
+                uninstall_appack(&settings, &id.unwrap(), version.as_deref())?
+            }
+        }
         CliAction::Creator { action } => match action {
             CliCreatorAction::New => {
                 creator_new()?;
