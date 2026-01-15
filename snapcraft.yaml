@@ -54,44 +54,76 @@ parts:
     source: https://gitlab.freedesktop.org/virgl/virglrenderer.git
     source-tag: virglrenderer-1.2.0
     source-depth: 1
-    plugin: meson
-    meson-parameters:
-      - --prefix=/usr
+    plugin: nil
     build-packages:
       - meson
       - python3-yaml
       - libgbm-dev
       - libdrm-dev
       - zstd
+    override-build: |
+      # Build this part without the GNOME SDK
+      unset CPATH
+      unset LIBRARY_PATH
+      unset GI_TYPELIB_PATH
+      unset GETTEXTDATADIRS
+      unset ACLOCAL_PATH
+      unset PYTHONPATH
+
+      export PATH="/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      export CFLAGS="-isystem $SNAPCRAFT_STAGE/usr/include"
+      export CXXFLAGS="-isystem $SNAPCRAFT_STAGE/usr/include"
+      export LDFLAGS="-L$SNAPCRAFT_STAGE/lib -L$SNAPCRAFT_STAGE/usr/lib -L$SNAPCRAFT_STAGE/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR -L$SNAPCRAFT_STAGE/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR"
+      export PKG_CONFIG_PATH="/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig:$SNAPCRAFT_STAGE/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/pkgconfig:$SNAPCRAFT_STAGE/usr/share/pkgconfig"
+      export LD_LIBRARY_PATH="/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:/usr/lib:/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:/lib"
+      
+      /usr/bin/python3 /usr/bin/meson setup builddir . \
+        --prefix=/usr \
+        --buildtype=release
+      
+      /usr/bin/python3 /usr/bin/meson compile -C builddir
+      /usr/bin/python3 /usr/bin/meson install -C builddir --destdir=$CRAFT_PART_INSTALL
 
   qemu:
     after: [ virgl ]
     source: https://gitlab.com/qemu-project/qemu.git
     source-tag: v10.1.2
     source-depth: 1
-    plugin: autotools
-    autotools-configure-parameters:
-      - --prefix=/usr
-      - --target-list=x86_64-softmmu # Add more architectures here if needed, cf qemu-virgil-snap
-      - --audio-drv-list=pa,sdl
-      - --enable-libusb
-      - --enable-sdl
-      - --enable-spice
-      - --enable-kvm
-      - --enable-opengl
-      - --enable-virglrenderer
-      - --enable-slirp
-      - --disable-user
-      - --disable-gtk # Added by me
-      - --disable-rbd # Added by me
-    build-environment:
-      - ACLOCAL_PATH: /usr/share/aclocal
-      - PKG_CONFIG_PATH: $CRAFT_STAGE/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/pkgconfig:/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}
-      - PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/snap/snapcraft/current/bin/scriptlet-bin:$PATH
-      - LD_LIBRARY_PATH: $CRAFT_STAGE/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+    plugin: nil
     override-build: |
+      # Build this part without the GNOME SDK
+      unset CPATH
+      unset LIBRARY_PATH
+      unset GI_TYPELIB_PATH
+      unset GETTEXTDATADIRS
+      unset ACLOCAL_PATH
+      unset PYTHONPATH
+
+      export PATH="/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      export CFLAGS="-isystem $CRAFT_STAGE/usr/include"
+      export CXXFLAGS="-isystem $CRAFT_STAGE/usr/include"
+      export LDFLAGS="-L$CRAFT_STAGE/lib -L$CRAFT_STAGE/usr/lib -L$CRAFT_STAGE/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR"
+      export PKG_CONFIG_PATH="$CRAFT_STAGE/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/pkgconfig:$CRAFT_STAGE/usr/lib/pkgconfig:$CRAFT_STAGE/usr/share/pkgconfig:/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig"
+      
       $CRAFT_PROJECT_DIR/snapbuildtools/remove_common.py core24
-      craftctl default
+  
+      ./configure \
+        --prefix=/usr \
+        --target-list=x86_64-softmmu \
+        --audio-drv-list=pa,sdl \
+        --enable-libusb \
+        --enable-sdl \
+        --enable-spice \
+        --enable-kvm \
+        --enable-opengl \
+        --enable-virglrenderer \
+        --enable-slirp \
+        --disable-user \
+        --disable-gtk \
+        --disable-rbd
+  
+      make -j$(nproc)
+      make install DESTDIR=$CRAFT_PART_INSTALL
     build-packages:
       - bison
       - flex

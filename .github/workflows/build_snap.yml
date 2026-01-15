@@ -1,0 +1,34 @@
+name: Build Snap
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build snap
+        uses: snapcore/action-build@v1
+
+      - name: Create Release and Upload Snap
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          files: "*.snap"
+          body: |
+            ## Release Notes for ${{ github.ref_name }}
+
+            This release includes:
+            - Latest features and bug fixes.
+            - Built on ${{ github.sha }}
+          draft: true
+          prerelease: false
+          token: ${{ secrets.GITHUB_TOKEN }}
