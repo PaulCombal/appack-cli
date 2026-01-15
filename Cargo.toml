@@ -1,7 +1,7 @@
 [package]
-name = "appack-cli"
+name = "appack"
 version = "0.1.2"
-license = "GPL-3"
+license = "GPL-3.0-only"
 edition = "2024"
 authors = [
     "Paul <abonnementspaul -@- gmail.com>",
@@ -10,7 +10,7 @@ authors = [
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-zip = { version = "6" }
+zip = { version = "7" }
 anyhow = { version = "1" }
 serde = { version = "1", features = ["derive"] }
 serde_yaml = { version = "0.9" }

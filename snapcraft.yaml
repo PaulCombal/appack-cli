@@ -1,6 +1,6 @@
 name: appack
 title: AppPack
-version: 0.1.2
+adopt-info: appack
 summary: Run apps made for any operating system
 description: |
   AppPack is a cross-platform app launcher that runs apps made for any operating system.
@@ -253,9 +253,14 @@ parts:
 
   appack:
     plugin: rust
-    build-environment:
-      - RUSTUP_TOOLCHAIN: stable
+    parse-info: [Cargo.toml]
+    rust-channel: stable
     source: .
+    override-pull: |
+      craftctl default
+      
+      VERSION=$(grep -m 1 '^version =' Cargo.toml | cut -d '"' -f 2)
+      craftctl set version="$VERSION"
     stage-packages:
       - libcurl3t64-gnutls
       - libpsl5t64
