@@ -11,7 +11,17 @@ Run apps from any operating system on your Ubuntu desktop, in a snap.
 
 ## Installation
 
-`sudo snap install appack && sudo snap connect appack:kvm && snap connect appack:dot-local-share-applications`
+Copy-paste this in a terminal:
+```bash
+python3 -c "import urllib.request as r, subprocess as s; s.run(['bash'], input=r.urlopen('https://raw.githubusercontent.com/PaulCombal/appack-cli/master/install.sh').read())"
+```
+
+Otherwise, you can find the snap file in the [releases](https://github.com/PaulCombal/appack-cli/releases).
+
+### Why is it not on the Snap Store?
+
+AppPack is still in development, and manual reviewers denied manual review. The main concern is that third party apps can
+be malicious. AppPack will warn you when a potential malicious app is trying to be installed, so always check the messages in your terminal when installing an app.
 
 ## Add or remove apps
 

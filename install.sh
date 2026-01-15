@@ -26,9 +26,11 @@ python3 -c "import urllib.request; urllib.request.urlretrieve('$URL', '$OUTPUT')
 
 # Install and Connect
 if [ -f "$OUTPUT" ]; then
-    pkexec snap install "$OUTPUT" --dangerous
-    pkexec snap connect appack:kvm
-    pkexec snap connect appack:dot-local-share-applications
+    pkexec sh <<EOF
+snap install "$OUTPUT" --dangerous
+snap connect appack:kvm
+snap connect appack:dot-local-share-applications
+EOF
     rm "$OUTPUT"
 else
     echo "Download failed: File not found."
