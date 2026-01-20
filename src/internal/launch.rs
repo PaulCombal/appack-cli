@@ -31,6 +31,7 @@ use std::sync::{Arc, mpsc};
 use std::thread;
 use std::thread::JoinHandle;
 use std::time::Duration;
+use crate::utils::xdg_session_type_detector::get_freerdp_executable;
 
 fn to_win_escaped_path(path: &str) -> String {
     const PREFIX: &str = "\\\\tsclient\\home\\";
@@ -114,14 +115,15 @@ fn spawn_freerdp(
         .map(|s| s.replace("$WHITESPACE", " "))
         .collect();
 
-    println!("Launching xfreerdp3 with args: {args:?}");
-    log_debug("Launching xfreerdp3 with args: ");
+    let freerdp_exec = get_freerdp_executable();
+    println!("Launching {freerdp_exec} with args: {args:?}");
+    log_debug(format!("Launching {freerdp_exec} with args: "));
     log_debug(&args);
 
-    let child = Command::new("xfreerdp3")
+    let child = Command::new(freerdp_exec)
         .args(args)
         .spawn()
-        .context("Failed to launch xfreerdp3")?;
+        .context(format!("Failed to launch {freerdp_exec}"))?;
 
     Ok(child)
 }
@@ -412,8 +414,15 @@ pub fn launch(
             // 2. Ok(Some(status)): Child has EXITED
             Ok(Some(status)) => {
                 eprintln!("QEMU process unexpectedly exited with status: {}", status);
+
+                notify_rust::Notification::new()
+                    .summary("Virtualization error")
+                    .body("Make sure virtualization is enabled in your BIOS and that this snap has the KVM connection enabled")
+                    .show()
+                    .context("Failed to show desktop notification")?;
+
                 return Err(anyhow!("QEMU process died before QMP socket was ready.")
-                    .context("Qemu failed to start. Make sure you installed AppPack with the command on the Readme (with the appropriate connections)."));
+                    .context("Qemu failed to start. Make sure virtualization is enabled in your BIOS and this snap has the KVM connection plugged)."));
             }
 
             // 3. Err(e): An error occurred while trying to check the status

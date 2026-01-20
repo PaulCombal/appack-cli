@@ -25,6 +25,7 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 use zip::ZipArchive;
+use crate::utils::logger::log_debug;
 
 /// Weirdly enough this doesn't need escaping. To confirm, I escape anyway.
 /// https://specifications.freedesktop.org/desktop-entry-spec/1.1/value-types.html
@@ -42,10 +43,10 @@ fn process_desktop_entry(
         let escaped_rdp_args = desktop_entry
             .rdp_args
             .replace('\\', "\\\\")
-            .replace('"', "\\\"");
+            .replace('\'', "\\'");
 
         format!(
-            "appack launch {} \"{}\" --version={}",
+            "appack launch {} '{}' --version={}",
             app.id, escaped_rdp_args, app.version
         )
     };
@@ -58,7 +59,7 @@ fn process_desktop_entry(
             icon_dir.join(&desktop_entry.icon).to_str().unwrap(),
         );
 
-    println!("Installed desktop entry with supposed exec line: `{appack_launch_cmd}`");
+    log_debug(format!("Installed desktop entry with supposed exec line: `{appack_launch_cmd}`"));
 
     let final_exec_lines: Vec<_> = final_contents
         .lines()
@@ -312,6 +313,8 @@ pub fn install_appack(file_path: PathBuf, settings: AppPackLocalSettings) -> Res
     // 2. Add to installed list
     installed_apps.installed.push(new_app_entry.clone());
     settings.save_installed(installed_apps)?;
+
+    println!("Installation complete. You might need to log off and in again for the desktop integration to show.");
 
     Ok(())
 }

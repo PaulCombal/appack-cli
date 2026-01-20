@@ -16,3 +16,4 @@
 pub mod logger;
 pub mod qmp;
 pub mod zip_dir;
+pub mod xdg_session_type_detector;

@@ -20,6 +20,7 @@ use serde::Deserialize;
 use std::io::Read;
 use std::path::Path;
 use std::process::Command;
+use crate::utils::xdg_session_type_detector::get_freerdp_executable;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AppBuildConfig {
@@ -70,10 +71,10 @@ impl AppBuildConfig {
             .replace("$HOME", &snap_real_home);
 
         let full_command_args = full_command.split_whitespace().collect::<Vec<&str>>();
+        let freerdp_exec = get_freerdp_executable();
+        println!("Full {freerdp_exec} args {:?}", full_command_args);
 
-        println!("Full RDP args {:?}", full_command_args);
-
-        let mut command = Command::new("xfreerdp3");
+        let mut command = Command::new(freerdp_exec);
         command.args(full_command_args);
         command
     }

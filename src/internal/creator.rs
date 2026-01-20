@@ -29,6 +29,7 @@ use std::thread;
 use std::time::Duration;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
+use crate::utils::xdg_session_type_detector::get_freerdp_executable;
 
 fn create_image(path: &Path) -> Result<()> {
     Command::new("qemu-img")
@@ -43,10 +44,16 @@ fn create_image(path: &Path) -> Result<()> {
     Ok(())
 }
 
+// TODO: rewrite the logic, we shouldn't ever run that, we're in a snap though
 fn get_xfreerdp3_pids() -> Result<String> {
+    let freerdp_exec = get_freerdp_executable();
+    let shell_cmd = format!(
+        "ps aux | grep {} | grep -v grep | awk '{{print $2}}'",
+        freerdp_exec
+    );
     let output = Command::new("sh")
         .arg("-c")
-        .arg("ps aux | grep xfreerdp3 | grep -v grep | awk '{print $2}'")
+        .arg(shell_cmd)
         .output()
         .context("Failed to get FreeRDP pids")?;
 
