@@ -7,7 +7,7 @@ Run apps from any operating system on your Ubuntu desktop, in a snap.
 
 [Technical documentation](./assets/doc/DOCUMENTATION.md)
 
-⚠️ This has only been tested on XFCE. Feedback is welcome!
+⚠️ This has only been tested on a few desktops. Feedback is welcome!
 
 ## Installation
 
@@ -36,11 +36,20 @@ appack list-installed
 
 Use the desktop integration to launch an app.
 
+## Common issues
+
+On Wayland (XWayland) there are two issues:
+* Sometimes when a window pops up, the cursor position is messed up. Spamming the Esc key might help
+* Windows can be laggy sometimes
+
 ## FAQ
 
 ### Is there an app store or marketplace for AppPack?
 
 Not currently, maybe in the future if this project gets some traction.
+
+In the meantime here is a curated list of known AppPacks:
+* [Microsoft Office / 365 Copilot](https://github.com/PaulCombal/appack-365)
 
 ### Is AppPack production ready?
 
